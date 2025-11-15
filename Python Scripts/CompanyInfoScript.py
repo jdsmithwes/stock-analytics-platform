@@ -1,122 +1,120 @@
-import os
-import time
-import json
+import ssl
 import requests
 import pandas as pd
+from requests.adapters import HTTPAdapter
+import os
 import boto3
-from datetime import datetime
 
-# ---- Load credentials from environment variables ----
+# ---- AWS Credentials from Environment Variables ----
 aws_access_key_id = os.getenv("AWS_ACCESS_KEY_ID")
 aws_secret_access_key = os.getenv("AWS_SECRET_ACCESS_KEY")
 aws_region = os.getenv("AWS_REGION", "us-east-1")
 s3_bucket_name = os.getenv("S3_BUCKET_NAME")
-api_key = os.getenv("ALPHA_VANTAGE_API_KEY")
 
+# ---- Alpha Vantage API Key (new env var name = API_KEY) ----
+api_key = os.getenv("API_KEY")
+
+if not api_key:
+    raise ValueError(
+        "❌ Missing Alpha Vantage API Key. "
+        "Please set API_KEY in your environment variables."
+    )
+
+# ---- Create S3 Client ----
 s3_client = boto3.client(
     "s3",
     aws_access_key_id=aws_access_key_id,
     aws_secret_access_key=aws_secret_access_key,
-    region_name=aws_region,
+    region_name=aws_region
 )
 
+# ---- Output Directory ----
 local_dir = "./stock_data"
 os.makedirs(local_dir, exist_ok=True)
 
-CHECKPOINT_FILE = os.path.join(local_dir, "processed_tickers.json")
+# =============================================================================
+# 🔥 FUNCTION: GET ALL US EQUITY TICKERS FROM NASDAQ + NYSE (FREE ENDPOINT)
+# =============================================================================
 
-# ---- Load checkpoint progress if exists ----
-if os.path.exists(CHECKPOINT_FILE):
-    with open(CHECKPOINT_FILE, "r") as f:
-        processed = set(json.load(f))
-else:
-    processed = set()
+def fetch_us_equity_tickers():
+    """
+    Fetches and returns all US-listed equity tickers (NYSE + NASDAQ + AMEX).
+    Source: NASDAQ Trader symbol directories (free & updated daily).
+    """
+    urls = {
+        "nasdaq": "https://ftp.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt",
+        "other":  "https://ftp.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt"
+    }
 
-stock_list = [
-    "RIVN","NVDA","PLUG","PLTR","PFE","TSLA","F","AMD","PINS","DNN","BITF",
-    "CIFR","BBAI","INTC","RXRX","SMCI","OPEN","AAL","SOFI","ONDS","TEVA","SNAP",
-    "BAC","ACHR","KVUE","FUBO","QS","IREN","VALE","MARA","NVO","RIG","WULF","T","BTG",
-    "U","HIMS","RGTI","GRAB","NIO","BMNR","NOK","WBD","CMCSA","PCG","NCLH","RIOT","AG","QBTS",
-    "NU","AMZN","NVTS","ABEV","JOBY","BBD","CMG","SOUN","AAPL","PATH","MU","AMCR","PBR","ETNB",
-    "NGD","GOOGL","ITUB","TREX","UPST","HOOD","RKT","CPNG","ZETA","APLD","NKE","META",
-    "AUR","HBAN","CLSK","HPE","TOST","QUBT","AGNC","CCCS","IAG","STLA","UUUU","RF",
-    "CCL","CDE","EXK","CRWV","CLF","GT","VZ","GGB","UBER","KEY","CRBG","IONQ","MSFT","LUMN",
-    "JHX","LMND","LYFT"
-]
+    dfs = []
 
-all_records = []
+    for name, url in urls.items():
+        print(f"📥 Downloading {name} symbols...")
 
-def fetch_company_overview(ticker):
+        df = pd.read_csv(url, sep="|")
+        df = df[df["Symbol"].notnull()]  # remove blank/empy rows
+        dfs.append(df)
+
+    combined = pd.concat(dfs, ignore_index=True)
+
+    # Remove test tickers (NASDAQ uses these for QA)
+    exclusions = ["Test", "test", "TEST"]
+    combined = combined[~combined["Security Name"].str.contains("|".join(exclusions), na=False)]
+
+    tickers = combined["Symbol"].unique().tolist()
+
+    print(f"✅ Total US equity tickers found: {len(tickers)}")
+
+    return tickers
+
+
+# =============================================================================
+# MAIN SCRIPT LOGIC
+# =============================================================================
+
+# ---- Fetch dynamic ticker list ----
+print("🔍 Fetching all US equity tickers (NYSE + NASDAQ)...")
+all_tickers = fetch_us_equity_tickers()
+
+print(f"📊 Using {len(all_tickers)} tickers for API calls...")
+
+all_dataframes = []
+
+for ticker in all_tickers:
+    print(f"Fetching daily data for {ticker}...")
+
     url = (
-        f"https://www.alphavantage.co/query?function=OVERVIEW"
+        f"https://www.alphavantage.co/query?function=TIME_SERIES_DAILY"
         f"&symbol={ticker}&apikey={api_key}"
     )
+    response = requests.get(url)
 
-    attempt = 1
-    while attempt <= 6:  # will retry up to 6 times
-        try:
-            response = requests.get(url, timeout=30)
+    if response.status_code == 200:
+        json_data = response.json()
+        time_series = json_data.get("Time Series (Daily)")
 
-            if response.status_code != 200:
-                print(f"⚠ HTTP {response.status_code} — retrying in {attempt * 5}s...")
-                time.sleep(attempt * 5)
-                attempt += 1
-                continue
-
-            data = response.json()
-
-            # Check for API throttling note → wait 60s and retry
-            if "Note" in data or data == {}:
-                print(f"⏳ Rate limited — waiting 65 seconds...")
-                time.sleep(65)
-                attempt += 1
-                continue
-
-            # Valid data
-            data["ticker"] = ticker
-            return data
-
-        except requests.exceptions.Timeout:
-            print(f"⏱ Timeout — retrying in {attempt * 5}s...")
-            time.sleep(attempt * 5)
-            attempt += 1
-
-        except Exception as e:
-            print(f"❌ Unexpected error: {e} — retrying...")
-            time.sleep(attempt * 5)
-            attempt += 1
-
-    return None
-
-
-for ticker in stock_list:
-    if ticker in processed:
-        print(f"⏭ Skipping {ticker}, already processed.")
-        continue
-
-    print(f"\n📥 Fetching {ticker}...")
-    result = fetch_company_overview(ticker)
-
-    if result:
-        all_records.append(result)
-        print(f"✅ Retrieved {ticker}")
+        if time_series:
+            df = pd.DataFrame.from_dict(time_series, orient="index")
+            df["ticker"] = ticker
+            all_dataframes.append(df)
+            print(f"✅ Retrieved {ticker}")
+        else:
+            print(f"⚠ No time series data for {ticker}")
     else:
-        print(f"❌ No data for {ticker}, moving on.")
+        print(f"❌ Request failed for {ticker} (HTTP {response.status_code})")
 
-    # Save progress incrementally
-    processed.add(ticker)
-    with open(CHECKPOINT_FILE, "w") as f:
-        json.dump(list(processed), f)
+# ---- Combine all stocks and upload ----
+if all_dataframes:
+    combined_df = pd.concat(all_dataframes)
+    combined_df.index.name = "date"
+    combined_df.reset_index(inplace=True)
 
+    combined_file_path = os.path.join(local_dir, "combined_stock_data.csv")
+    combined_df.to_csv(combined_file_path, index=False)
+    print(f"\n✅ Saved locally: {combined_file_path}")
 
-if all_records:
-    combined_df = pd.DataFrame(all_records)
-    output_file = os.path.join(local_dir, "combined_company_overview.csv")
-    combined_df.to_csv(output_file, index=False)
+    s3_client.upload_file(combined_file_path, s3_bucket_name, "combined_stock_data.csv")
+    print(f"🚀 Uploaded to S3: s3://{s3_bucket_name}/combined_stock_data.csv")
 
-    print(f"\n✅ Saved locally: {output_file}")
-
-    s3_client.upload_file(output_file, s3_bucket_name, "combined_company_overview.csv")
-    print(f"🚀 Uploaded to S3: s3://{s3_bucket_name}/combined_company_overview.csv\n")
 else:
-    print("\n⚠ No data collected.")
+    print("\n⚠ No data retrieved — nothing uploaded.")
