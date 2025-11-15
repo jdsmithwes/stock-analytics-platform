@@ -4,9 +4,10 @@ import aiohttp
 import pandas as pd
 import boto3
 import logging
+import time
 from datetime import datetime
-from io import StringIO
 from aiohttp import ClientSession, ClientTimeout
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 # ------------------------------------
 # Logging Setup
@@ -28,6 +29,8 @@ ALPHAVANTAGE_API_KEY = os.getenv("ALPHAVANTAGE_API_KEY")
 if not ALPHAVANTAGE_API_KEY:
     raise ValueError("Missing ALPHAVANTAGE_API_KEY environment variable.")
 
+S3_KEY = "combined_stock_data_full_history.csv"
+
 # ------------------------------------
 # S3 Client
 # ------------------------------------
@@ -38,131 +41,164 @@ s3_client = boto3.client(
     region_name=AWS_REGION,
 )
 
-S3_KEY = "combined_stock_data.csv"
-
 # ------------------------------------
-# Load Existing S3 Data (Incremental Logic)
+# Load Existing S3 Data (optional merge)
 # ------------------------------------
 def load_existing_s3_data():
     try:
         csv_obj = s3_client.get_object(Bucket=S3_BUCKET_NAME, Key=S3_KEY)
         existing_df = pd.read_csv(csv_obj["Body"])
         logging.info(f"📄 Loaded existing dataset: {existing_df.shape[0]} rows")
-
-        most_recent_date = existing_df["date"].max()
-        logging.info(f"📅 Most recent date in S3: {most_recent_date}")
-
-        return existing_df, most_recent_date
-
+        return existing_df
     except s3_client.exceptions.NoSuchKey:
         logging.info("ℹ️ No existing S3 file found. Creating new dataset.")
-        return pd.DataFrame(), None
+        return pd.DataFrame()
 
 # ------------------------------------
-# Fetch S&P500 Ticklers
+# Fetch S&P 500 Tickers
 # ------------------------------------
 def fetch_sp500_tickers():
-    logging.info("🔍 Fetching S&P 500 tickers from DataHub…")
-    url = "https://datahub.io/core/s-and-p-500-companies/r/constituents.csv"
-    df = pd.read_csv(url)
+    logging.info("🔍 Fetching S&P 500 tickers…")
+    df = pd.read_csv("https://datahub.io/core/s-and-p-500-companies/r/constituents.csv")
     tickers = df["Symbol"].str.upper().tolist()
     logging.info(f"✅ Loaded {len(tickers)} tickers")
     return tickers
 
 # ------------------------------------
-# Async Fetch NEW Alpha Vantage Data
+# Convert AV JSON → DataFrame
 # ------------------------------------
-async def fetch_new_daily_data(session: ClientSession, ticker: str, most_recent_date):
-    url = (
-        "https://www.alphavantage.co/query"
-        f"?function=TIME_SERIES_DAILY&symbol={ticker}&apikey={ALPHAVANTAGE_API_KEY}"
+def normalize_alpha_vantage(ticker, ts):
+    df = (
+        pd.DataFrame.from_dict(ts, orient="index")
+        .reset_index()
+        .rename(columns={"index": "date"})
     )
 
-    try:
-        async with session.get(url) as resp:
-            if resp.status != 200:
-                logging.warning(f"⚠️ {ticker}: HTTP {resp.status}")
-                return None
-
-            data = await resp.json()
-    except Exception as e:
-        logging.warning(f"⚠️ {ticker}: API error {e}")
-        return None
-
-    ts = data.get("Time Series (Daily)")
-    if ts is None:
-        return None
-
-    df = pd.DataFrame.from_dict(ts, orient="index")
-    df.index.name = "date"
-    df.reset_index(inplace=True)
     df["ticker"] = ticker
 
-    # Only new rows if existing file present
-    if most_recent_date:
-        df = df[df["date"] > most_recent_date]
+    df.rename(
+        columns={
+            "1. open": "open",
+            "2. high": "high",
+            "3. low": "low",
+            "4. close": "close",
+            "5. adjusted close": "adjusted_close",
+            "6. volume": "volume",
+            "7. dividend amount": "dividend_amount",
+            "8. split coefficient": "split_coefficient",
+        },
+        inplace=True,
+    )
 
-    if df.empty:
-        return None
+    df["date"] = pd.to_datetime(df["date"])
 
-    logging.info(f"📈 {ticker}: {df.shape[0]} new rows")
+    numeric_cols = [
+        "open", "high", "low", "close",
+        "adjusted_close", "volume",
+        "dividend_amount", "split_coefficient"
+    ]
+
+    for col in numeric_cols:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
     return df
 
 # ------------------------------------
-# Async Driver
+# Async full-history fetch with retry
 # ------------------------------------
-async def fetch_all_new_data(tickers, most_recent_date):
-    timeout = ClientTimeout(total=30)
+@retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
+async def fetch_full_history(session: ClientSession, ticker: str):
+    url = (
+        "https://www.alphavantage.co/query"
+        f"?function=TIME_SERIES_DAILY_ADJUSTED&outputsize=full"
+        f"&symbol={ticker}&apikey={ALPHAVANTAGE_API_KEY}"
+    )
+
+    async with session.get(url) as resp:
+        if resp.status != 200:
+            raise Exception(f"HTTP {resp.status}")
+
+        data = await resp.json()
+
+    ts = data.get("Time Series (Daily)")
+    if ts is None:
+        logging.warning(f"⚠️ {ticker}: No time series in response.")
+        return None
+
+    df = normalize_alpha_vantage(ticker, ts)
+    logging.info(f"📈 {ticker}: Loaded {df.shape[0]} rows full history")
+    return df
+
+# ------------------------------------
+# Rate Limiter for Premium (120/min)
+# ------------------------------------
+API_CALLS_PER_MINUTE = 110
+CALL_DELAY = 60 / API_CALLS_PER_MINUTE
+
+# ------------------------------------
+# Async driver
+# ------------------------------------
+async def fetch_all_full_history(tickers):
+    timeout = ClientTimeout(total=60)
     connector = aiohttp.TCPConnector(limit=50)
 
+    all_results = []
+    
     async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
-        tasks = [
-            fetch_new_daily_data(session, ticker, most_recent_date)
-            for ticker in tickers
-        ]
-        results = await asyncio.gather(*tasks)
+        for i, ticker in enumerate(tickers):
+            logging.info(f"⏳ Fetching {ticker} ({i+1}/{len(tickers)})")
 
-    return [df for df in results if df is not None]
+            df = await fetch_full_history(session, ticker)
+
+            if df is not None:
+                all_results.append(df)
+
+            await asyncio.sleep(CALL_DELAY)  # stay within API limits
+
+    return all_results
 
 # ------------------------------------
 # Main Workflow
 # ------------------------------------
 def main():
-    logging.info("🚀 Starting incremental S&P500 data load")
+    logging.info("🚀 Starting FULL historical S&P500 load")
 
-    existing_df, most_recent_date = load_existing_s3_data()
+    existing_df = load_existing_s3_data()
     tickers = fetch_sp500_tickers()
 
-    new_data = asyncio.run(fetch_all_new_data(tickers, most_recent_date))
+    new_data = asyncio.run(fetch_all_full_history(tickers))
 
     if not new_data:
-        logging.info("✅ No new data found for any ticker. Exiting.")
+        logging.warning("⚠️ No data returned!")
         return
 
-    new_df = pd.concat(new_data)
-    logging.info(f"📊 Total new rows: {new_df.shape[0]}")
+    new_df = pd.concat(new_data, ignore_index=True)
 
-    # Append new rows to existing dataset
-    final_df = (
-        pd.concat([existing_df, new_df], ignore_index=True)
-        if not existing_df.empty
-        else new_df
-    )
+    logging.info(f"📊 Downloaded {new_df.shape[0]} total rows (full history)")
 
-    # Save locally
-    output_file = "./combined_stock_data.csv"
+    # Merge with existing S3 data if exists
+    if not existing_df.empty:
+        final_df = (
+            pd.concat([existing_df, new_df], ignore_index=True)
+            .drop_duplicates(subset=["ticker", "date"])
+            .sort_values(["ticker", "date"])
+        )
+    else:
+        final_df = new_df
+
+    # Save local
+    output_file = "./combined_stock_data_full_history.csv"
     final_df.to_csv(output_file, index=False)
-    logging.info("💾 Saved updated dataset locally")
+    logging.info("💾 Saved full dataset locally")
 
     # Upload to S3
     s3_client.upload_file(output_file, S3_BUCKET_NAME, S3_KEY)
+    logging.info(f"🚀 Uploaded full dataset → s3://{S3_BUCKET_NAME}/{S3_KEY}")
 
-    logging.info(f"🚀 Uploaded updated dataset → s3://{S3_BUCKET_NAME}/{S3_KEY}")
-    logging.info("🎉 Incremental update complete!")
+    logging.info("🎉 Full historical load complete!")
 
 # ------------------------------------
 # Run
 # ------------------------------------
 if __name__ == "__main__":
     main()
-
