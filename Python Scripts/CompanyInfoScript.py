@@ -11,13 +11,13 @@ aws_secret_access_key = os.getenv("AWS_SECRET_ACCESS_KEY")
 aws_region = os.getenv("AWS_REGION", "us-east-1")
 s3_bucket_name = os.getenv("S3_BUCKET_NAME")
 
-# ---- Alpha Vantage API Key (new env var name = API_KEY) ----
-api_key = os.getenv("API_KEY")
+# ---- Alpha Vantage API Key (new env var name = ALPHAVANTAGE_API_KEY) ----
+api_key = os.getenv("ALPHAVANTAGE_API_KEY")
 
 if not api_key:
     raise ValueError(
         "❌ Missing Alpha Vantage API Key. "
-        "Please set API_KEY in your environment variables."
+        "Please set ALPHAVANTAGE_API_KEY in your environment variables."
     )
 
 # ---- Create S3 Client ----
