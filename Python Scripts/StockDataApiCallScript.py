@@ -5,13 +5,22 @@ from requests.adapters import HTTPAdapter
 import os
 import boto3
 
-# ---- Set your AWS credentials directly here ----
+# ---- AWS Credentials from Environment Variables ----
 aws_access_key_id = os.getenv("AWS_ACCESS_KEY_ID")
 aws_secret_access_key = os.getenv("AWS_SECRET_ACCESS_KEY")
 aws_region = os.getenv("AWS_REGION", "us-east-1")
 s3_bucket_name = os.getenv("S3_BUCKET_NAME")
 
-# Create S3 client with the above credentials
+# ---- Alpha Vantage API Key from Environment Variable ----
+api_key = os.getenv("ALPHAVANTAGE_API_KEY")
+
+if not api_key:
+    raise ValueError(
+        "❌ Missing Alpha Vantage API Key. "
+        "Please set ALPHAVANTAGE_API_KEY in your environment variables."
+    )
+
+# ---- Create S3 Client ----
 s3_client = boto3.client(
     "s3",
     aws_access_key_id=aws_access_key_id,
@@ -23,24 +32,56 @@ s3_client = boto3.client(
 local_dir = "./stock_data"
 os.makedirs(local_dir, exist_ok=True)
 
-# ---- List of Tickers ----
-dow_jones_stocks = [
-    "RIVN","NVDA","PLUG","PLTR","PFE","TSLA","F","AMD","PINS","DNN","BITF",
-    "CIFR","BBAI","INTC","RXRX","SMCI","OPEN","AAL","SOFI","ONDS","TEVA","SNAP",
-    "BAC","ACHR","KVUE","FUBO","QS","IREN","VALE","MARA","NVO","RIG","WULF","T","BTG",
-    "U","HIMS","RGTI","GRAB","NIO","BMNR","NOK","WBD","CMCSA","PCG","NCLH","RIOT","AG","QBTS",
-    "NU","AMZN","NVTS","ABEV","JOBY","BBD","CMG","SOUN","AAPL","PATH","MU","AMCR","PBR","ETNB",
-    "NGD","GOOGL","ITUB","TREX","UPST","HOOD","RKT","CPNG","ZETA","APLD","NKE","META",
-    "AUR","HBAN","CLSK","HPE","TOST","QUBT","AGNC","CCCS","IAG","STLA","UUUU","RF",
-    "CCL","CDE","EXK","CRWV","CLF","GT","VZ","GGB","UBER","KEY","CRBG","IONQ", "MSFT","LUMN",
-    "JHX","LMND","LYFT"]
+# =============================================================================
+# 🔥 FUNCTION: GET ALL US EQUITY TICKERS FROM NASDAQ + NYSE (FREE ENDPOINT)
+# =============================================================================
 
-# ---- Alpha Vantage API Key ----
-api_key = "NY03HQLBAOIVQ6AF"
+def fetch_us_equity_tickers():
+    """
+    Fetches and returns all US-listed tickers (NYSE + NASDAQ + AMEX).
+    Source: NASDAQ Trader Symbol Directory (free & updated daily).
+    """
+    urls = {
+        "nasdaq": "https://ftp.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt",
+        "other": "https://ftp.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt"
+    }
+
+    dfs = []
+
+    for name, url in urls.items():
+        print(f"📥 Downloading {name} symbols...")
+
+        df = pd.read_csv(url, sep="|")
+        df = df[df["Symbol"].notnull()]  # remove blank rows
+
+        dfs.append(df)
+
+    combined = pd.concat(dfs, ignore_index=True)
+
+    # Remove test symbols
+    exclusions = ["Test", "test", "TEST"]
+    combined = combined[~combined["Security Name"].str.contains("|".join(exclusions), na=False)]
+
+    tickers = combined["Symbol"].unique().tolist()
+
+    print(f"✅ Total US equity tickers found: {len(tickers)}")
+
+    return tickers
+
+
+# =============================================================================
+# MAIN SCRIPT LOGIC
+# =============================================================================
+
+# ---- Fetch dynamic ticker list ----
+print("🔍 Fetching all US equity tickers (NYSE + NASDAQ)...")
+all_tickers = fetch_us_equity_tickers()
+
+print(f"📊 Using {len(all_tickers)} tickers for API calls...")
 
 all_dataframes = []
 
-for ticker in dow_jones_stocks:
+for ticker in all_tickers:
     print(f"Fetching daily data for {ticker}...")
 
     url = (
@@ -73,10 +114,8 @@ if all_dataframes:
     combined_df.to_csv(combined_file_path, index=False)
     print(f"\n✅ Saved locally: {combined_file_path}")
 
-    # ---- Upload unified CSV to S3 ----
     s3_client.upload_file(combined_file_path, s3_bucket_name, "combined_stock_data.csv")
     print(f"🚀 Uploaded to S3: s3://{s3_bucket_name}/combined_stock_data.csv")
 
 else:
     print("\n⚠ No data retrieved — nothing uploaded.")
-
