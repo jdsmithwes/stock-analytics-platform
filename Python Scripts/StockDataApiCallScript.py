@@ -4,7 +4,6 @@ import aiohttp
 import pandas as pd
 import boto3
 import logging
-import time
 from datetime import datetime
 from aiohttp import ClientSession, ClientTimeout
 from tenacity import retry, stop_after_attempt, wait_fixed
@@ -29,8 +28,6 @@ ALPHAVANTAGE_API_KEY = os.getenv("ALPHAVANTAGE_API_KEY")
 if not ALPHAVANTAGE_API_KEY:
     raise ValueError("Missing ALPHAVANTAGE_API_KEY environment variable.")
 
-S3_KEY = "combined_stock_data.csv"
-
 # ------------------------------------
 # S3 Client
 # ------------------------------------
@@ -52,7 +49,7 @@ def fetch_sp500_tickers():
     return tickers
 
 # ------------------------------------
-# Convert AV JSON → DataFrame
+# Normalize AlphaVantage JSON → DataFrame
 # ------------------------------------
 def normalize_alpha_vantage(ticker, ts):
     df = (
@@ -109,7 +106,7 @@ async def fetch_full_history(session: ClientSession, ticker: str):
 
     ts = data.get("Time Series (Daily)")
     if ts is None:
-        logging.warning(f"⚠️ {ticker}: No time series in response.")
+        logging.warning(f"⚠️ {ticker}: No time series returned.")
         return None
 
     df = normalize_alpha_vantage(ticker, ts)
@@ -120,7 +117,7 @@ async def fetch_full_history(session: ClientSession, ticker: str):
 # Rate Limiter for Premium (120/min)
 # ------------------------------------
 API_CALLS_PER_MINUTE = 110
-CALL_DELAY = 60 / API_CALLS_PER_MINUTE
+CALL_DELAY = 60 / API_CALLS_PER_MINUTE  # ~0.54 seconds/request
 
 # ------------------------------------
 # Async driver
@@ -129,7 +126,7 @@ async def fetch_all_full_history(tickers):
     timeout = ClientTimeout(total=60)
     connector = aiohttp.TCPConnector(limit=50)
 
-    all_results = []
+    results = []
     
     async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
         for i, ticker in enumerate(tickers):
@@ -138,44 +135,42 @@ async def fetch_all_full_history(tickers):
             df = await fetch_full_history(session, ticker)
 
             if df is not None:
-                all_results.append(df)
+                results.append(df)
 
             await asyncio.sleep(CALL_DELAY)
 
-    return all_results
+    return results
+
+# ------------------------------------
+# S3 Upload (partitioned by ticker)
+# ------------------------------------
+def upload_partitioned(df, ticker):
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+
+    # S3 path: stock_data/ticker=AAPL/
+    s3_prefix = f"stock_data/ticker={ticker}/"
+
+    # filename
+    filename = f"stock_data_{timestamp}.csv"
+    local_path = f"./{filename}"
+
+    # Save local
+    df.to_csv(local_path, index=False)
+
+    # Upload
+    s3_key = f"{s3_prefix}{filename}"
+    s3_client.upload_file(local_path, S3_BUCKET_NAME, s3_key)
+
+    logging.info(f"📤 Uploaded → s3://{S3_BUCKET_NAME}/{s3_key}")
 
 # ------------------------------------
 # Main Workflow
 # ------------------------------------
 def main():
-    logging.info("🚀 Starting FULL historical S&P500 load")
+    logging.info("🚀 Starting FULL historical partitioned S&P500 load")
 
     tickers = fetch_sp500_tickers()
+    all_data = asyncio.run(fetch_all_full_history(tickers))
 
-    new_data = asyncio.run(fetch_all_full_history(tickers))
+    if not a
 
-    if not new_data:
-        logging.warning("⚠️ No data returned!")
-        return
-
-    # FULL REFRESH — NO MERGING — NO COMPARING TO S3
-    final_df = pd.concat(new_data, ignore_index=True)
-
-    logging.info(f"📊 Downloaded {final_df.shape[0]} total rows (full history)")
-
-    # Save local
-    output_file = "./combined_stock_data.csv"
-    final_df.to_csv(output_file, index=False)
-    logging.info("💾 Saved dataset locally")
-
-    # Upload to S3
-    s3_client.upload_file(output_file, S3_BUCKET_NAME, S3_KEY)
-    logging.info(f"🚀 Uploaded dataset → s3://{S3_BUCKET_NAME}/{S3_KEY}")
-
-    logging.info("🎉 Full historical refresh complete!")
-
-# ------------------------------------
-# Run
-# ------------------------------------
-if __name__ == "__main__":
-    main()
