@@ -1,73 +1,72 @@
-{{ config(
-    materialized = 'view',
-    schema = 'STAGING'
-) }}
-
-WITH company_overview AS (
+WITH source_data AS (
 
     SELECT
-        COL1  AS Symbol,
-        COL2  AS AssetType,
-        COL3  AS "Name",
-        COL4  AS "Description",
-        COL5  AS "CIK",
-        COL6  AS "Exchange",
-        COL7  AS "Currency",
-        COL8  AS "Country",
-        COL9  AS "Sector",
-        COL10 AS "Industry",
-        COL11 AS "Address",
-        COL12 AS "OfficialSite",
-        COL13 AS "FiscalYearEnd",
-        TRY_TO_DATE(NULLIF(UPPER(COL14), 'NONE'), 'YYYY-MM-DD') AS "LatestQuarter",
-        TRY_TO_NUMBER(NULLIF(UPPER(COL15), 'NONE')) AS "MarketCapitalization",
-        TRY_TO_NUMBER(NULLIF(UPPER(COL16), 'NONE')) AS "EBITDA",
-        TRY_TO_NUMBER(NULLIF(UPPER(COL17), 'NONE')) AS "PERatio",
-        TRY_TO_NUMBER(NULLIF(UPPER(COL18), 'NONE')) AS "PEGRatio",
-        TRY_TO_NUMBER(NULLIF(UPPER(COL19), 'NONE')) AS "BookValue",
-        TRY_TO_NUMBER(NULLIF(UPPER(COL20), 'NONE')) AS "DividendPerShare",
-        TRY_TO_NUMBER(NULLIF(UPPER(COL21), 'NONE')) AS "DividendYield",
-        TRY_TO_NUMBER(NULLIF(UPPER(COL22), 'NONE')) AS "EPS",
-        TRY_TO_NUMBER(NULLIF(UPPER(COL23), 'NONE')) AS "RevenuePerShareTTM",
-        TRY_TO_NUMBER(NULLIF(UPPER(COL24), 'NONE')) AS "ProfitMargin",
-        TRY_TO_NUMBER(NULLIF(UPPER(COL25), 'NONE')) AS "OperatingMarginTTM",
-        TRY_TO_NUMBER(NULLIF(UPPER(COL26), 'NONE')) AS "ReturnOnAssetsTTM",
-        TRY_TO_NUMBER(NULLIF(UPPER(COL27), 'NONE')) AS "ReturnOnEquityTTM",
-        TRY_TO_NUMBER(NULLIF(UPPER(COL28), 'NONE')) AS "RevenueTTM",
-        TRY_TO_NUMBER(NULLIF(UPPER(COL29), 'NONE')) AS "GrossProfitTTM",
-        TRY_TO_NUMBER(NULLIF(UPPER(COL30), 'NONE')) AS "DilutedEPSTTM",
-        TRY_TO_NUMBER(NULLIF(UPPER(COL31), 'NONE')) AS "QuarterlyEarningsGrowthYOY",
-        TRY_TO_NUMBER(NULLIF(UPPER(COL32), 'NONE')) AS "QuarterlyRevenueGrowthYOY",
-        TRY_TO_NUMBER(NULLIF(UPPER(COL33), 'NONE')) AS "AnalystTargetPrice",
-        TRY_TO_NUMBER(NULLIF(UPPER(COL34), 'NONE')) AS "AnalystRatingStrongBuy",
-        TRY_TO_NUMBER(NULLIF(UPPER(COL35), 'NONE')) AS "AnalystRatingBuy",
-        TRY_TO_NUMBER(NULLIF(UPPER(COL36), 'NONE')) AS "AnalystRatingHold",
-        TRY_TO_NUMBER(NULLIF(UPPER(COL37), 'NONE')) AS "AnalystRatingSell",
-        TRY_TO_NUMBER(NULLIF(UPPER(COL38), 'NONE')) AS "AnalystRatingStrongSell",
-        TRY_TO_NUMBER(NULLIF(UPPER(COL39), 'NONE')) AS "TrailingPE",
-        TRY_TO_NUMBER(NULLIF(UPPER(COL40), 'NONE')) AS "ForwardPE",
-        TRY_TO_NUMBER(NULLIF(UPPER(COL41), 'NONE')) AS "PriceToSalesRatioTTM",
-        TRY_TO_NUMBER(NULLIF(UPPER(COL42), 'NONE')) AS "PriceToBookRatioTTM",
-        TRY_TO_NUMBER(NULLIF(UPPER(COL43), 'NONE')) AS "EVToRevenue",
-        TRY_TO_NUMBER(NULLIF(UPPER(COL44), 'NONE')) AS "EVToEBITDA",
-        TRY_TO_NUMBER(NULLIF(UPPER(COL45), 'NONE')) AS "Beta",
-        TRY_TO_NUMBER(NULLIF(UPPER(COL46), 'NONE')) AS "52WeekHigh",
-        TRY_TO_NUMBER(NULLIF(UPPER(COL47), 'NONE')) AS "52WeekLow",
-        TRY_TO_NUMBER(NULLIF(UPPER(COL48), 'NONE')) AS "50DayMovingAverage",
-        TRY_TO_NUMBER(NULLIF(UPPER(COL49), 'NONE')) AS "200DayMovingAverage",
-        TRY_TO_NUMBER(NULLIF(UPPER(COL50), 'NONE')) AS "SharesOutstanding",
-        TRY_TO_NUMBER(NULLIF(UPPER(COL51), 'NONE')) AS "SharesFloat",
-        TRY_TO_NUMBER(NULLIF(UPPER(COL52), 'NONE')) AS "PercentInsiders",
-        TRY_TO_NUMBER(NULLIF(UPPER(COL53), 'NONE')) AS "PercentInstitutions",
-        TRY_TO_DATE(NULLIF(UPPER(COL54), 'NONE'), 'YYYY-MM-DD') AS "DividendDate",
-        TRY_TO_DATE(NULLIF(UPPER(COL55), 'NONE'), 'YYYY-MM-DD') AS "ExDividendDate",
-        COL56 AS "Ticker"
+        -- base alpha vantage fields
+        symbol,
+        assettype,
+        name,
+        description,
+        cik,
+        exchange,
+        currency,
+        country,
+        sector,
+        industry,
+        address,
+
+        -- date strings -> cast to DATE
+        TRY_TO_DATE(fiscalyearend)         AS fiscal_year_end,
+        TRY_TO_DATE(latestquarter)         AS latest_quarter,
+
+        -- numeric casts
+        TRY_TO_NUMBER(marketcapitalization)    AS market_cap,
+        TRY_TO_NUMBER(ebitda)                  AS ebitda,
+        TRY_TO_NUMBER(peratio)                 AS pe_ratio,
+        TRY_TO_NUMBER(pegratio)                AS peg_ratio,
+        TRY_TO_NUMBER(bookvalue)               AS book_value,
+        TRY_TO_NUMBER(dividendpershare)        AS dividend_per_share,
+        TRY_TO_NUMBER(dividendyield)           AS dividend_yield,
+        TRY_TO_NUMBER(eps)                     AS eps,
+        TRY_TO_NUMBER(revenuepersharettm)      AS revenue_per_share_ttm,
+        TRY_TO_NUMBER(profitmargin)            AS profit_margin,
+        TRY_TO_NUMBER(operatingmarginttm)      AS operating_margin_ttm,
+        TRY_TO_NUMBER(returnonassets)          AS return_on_assets,
+        TRY_TO_NUMBER(returnonequity)          AS return_on_equity,
+        TRY_TO_NUMBER(revenueTTM)              AS revenue_ttm,
+        TRY_TO_NUMBER(grossProfitTTM)          AS gross_profit_ttm,
+        TRY_TO_NUMBER(dilutedEPSTTM)           AS diluted_eps_ttm,
+        TRY_TO_NUMBER(quarterlyEarningsGrowthYOY)    AS quarterly_earnings_growth_yoy,
+        TRY_TO_NUMBER(quarterlyRevenueGrowthYOY)     AS quarterly_revenue_growth_yoy,
+        TRY_TO_NUMBER(analystTargetPrice)      AS analyst_target_price,
+        TRY_TO_NUMBER(trailingPE)              AS trailing_pe,
+        TRY_TO_NUMBER(forwardPE)               AS forward_pe,
+        TRY_TO_NUMBER(priceToSalesTTM)         AS price_to_sales_ttm,
+        TRY_TO_NUMBER(priceToBookRatio)        AS price_to_book_ratio,
+        TRY_TO_NUMBER(evToRevenue)             AS ev_to_revenue,
+        TRY_TO_NUMBER(evToEBITDA)              AS ev_to_ebitda,
+        TRY_TO_NUMBER(beta)                    AS beta,
+        TRY_TO_NUMBER(week52high)              AS week_52_high,
+        TRY_TO_NUMBER(week52low)               AS week_52_low,
+        TRY_TO_NUMBER(day50movingaverage)      AS day_50_ma,
+        TRY_TO_NUMBER(day200movingaverage)     AS day_200_ma,
+        TRY_TO_NUMBER(sharesoutstanding)       AS shares_outstanding,
+
+        TRY_TO_DATE(dividenddate)              AS dividend_date,
+        TRY_TO_DATE(exdividenddate)            AS ex_dividend_date,
+
+        -- script + pipeline metadata
+        ticker,
+        ingest_timestamp,
+        metadata$filename                    AS source_filename,
+        load_time,
+
+        -- load date (for partitioning / snapshots)
+        TO_DATE(ingest_timestamp)             AS load_date
+
     FROM {{ source('stock_data', 'company_overview_raw') }}
 
 )
 
-SELECT *
-FROM company_overview
-
-
-
+SELECT
+    *
+FROM source_data;
