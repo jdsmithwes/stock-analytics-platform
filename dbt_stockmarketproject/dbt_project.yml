@@ -1,38 +1,66 @@
-name: stock_data
+name: 'stock_data'
+version: '1.0.0'
+config-version: 2
 
-profile: stock_data
+profile: 'stock_data'
 
-model-paths: ["models"]
-macro-paths: ["macros"]
-seed-paths: ["seeds"]
+# -----------------------------------------------------------------------------
+#  GLOBAL PROJECT CONFIGURATION
+# -----------------------------------------------------------------------------
+model-paths: ['models']
+analysis-paths: ['analysis']
+test-paths: ['tests']
+seed-paths: ['seeds']
+macro-paths: ['macros']
+snapshot-paths: ['snapshots']
 
+target-path: 'target'
 clean-targets:
-  - "target"
-  - "dbt_packages"
+  - 'target'
+  - 'dbt_packages'
 
-seeds:
-  stock_data:
-    +schema: SEEDS
-
+# -----------------------------------------------------------------------------
+#  MODEL CONFIGURATION
+# -----------------------------------------------------------------------------
 models:
   stock_data:
-    +database: STOCK_DATA
-    +materialized: table
-    +schema: ""
-    +static_analysis: unsafe
 
-    raw:
-      +materialized: view
-      +schema: RAW
-
+    # ----------------------------
+    # STAGING MODELS
+    # ----------------------------
     staging:
-      +materialized: view
       +schema: STAGING
-      +static_analysis: unsafe
+      +materialized: view
+      +tags: ['staging']
 
+    # ----------------------------
+    # INTERMEDIATE MODELS
+    # ----------------------------
     intermediate:
-      +materialized: table
       +schema: INTERMEDIATE
+      +materialized: table
+      +tags: ['intermediate']
 
+    # ----------------------------
+    # ANALYTICS / FACT MODELS
+    # ----------------------------
+    analytics:
+      +schema: ANALYTICS
+      +materialized: table
+      +tags: ['analytics']
+
+# -----------------------------------------------------------------------------
+#  TEST CONFIGURATION (OPTIONAL)
+# -----------------------------------------------------------------------------
+tests:
+  +severity: warn
+
+# -----------------------------------------------------------------------------
+#  QUOTING (SAFE DEFAULTS)
+# -----------------------------------------------------------------------------
+quoting:
+  database: false
+  schema: false
+  identifier: false
 
 

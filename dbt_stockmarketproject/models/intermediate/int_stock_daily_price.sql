@@ -1,6 +1,6 @@
 WITH base AS (
     SELECT *
-    FROM {{ ref('stg_stock_price_data') }}
+    FROM {{ ref('stg_stockpricedata') }}
 ),
 
 calendar AS (
