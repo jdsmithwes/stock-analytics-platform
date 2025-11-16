@@ -1,11 +1,11 @@
 import os
 import asyncio
 import aiohttp
-import json
+import pandas as pd
 import boto3
+import json
 import logging
 from datetime import datetime
-import pandas as pd
 from aiohttp import ClientSession, ClientTimeout
 from tenacity import retry, stop_after_attempt, wait_fixed
 
@@ -32,7 +32,7 @@ if not ALPHAVANTAGE_API_KEY:
 # -----------------------------------------------------------
 # S3 Client
 # -----------------------------------------------------------
-s3_client = boto3.client(
+s3 = boto3.client(
     "s3",
     aws_access_key_id=AWS_ACCESS_KEY_ID,
     aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
@@ -40,17 +40,17 @@ s3_client = boto3.client(
 )
 
 # -----------------------------------------------------------
-# Fetch S&P 500 tickers
+# Load S&P500 Tickers
 # -----------------------------------------------------------
 def fetch_sp500_tickers():
     df = pd.read_csv("https://datahub.io/core/s-and-p-500-companies/r/constituents.csv")
     return df["Symbol"].str.upper().tolist()
 
 # -----------------------------------------------------------
-# Retry wrapper for fetching
+# Fetch overview JSON (with retries)
 # -----------------------------------------------------------
-@retry(stop=stop_after_attempt(3), wait=wait_fixed(1))
-async def fetch_overview(session: ClientSession, ticker: str):
+@retry(stop=stop_after_attempt(3), wait=wait_fixed(0.5))
+async def fetch_overview(session, ticker):
     url = (
         "https://www.alphavantage.co/query"
         f"?function=OVERVIEW&symbol={ticker}&apikey={ALPHAVANTAGE_API_KEY}"
@@ -59,78 +59,75 @@ async def fetch_overview(session: ClientSession, ticker: str):
     async with session.get(url) as resp:
         if resp.status != 200:
             raise Exception(f"HTTP {resp.status}")
-
         data = await resp.json()
 
-    # Skip empty responses
     if not data or "Symbol" not in data:
-        logging.warning(f"⚠️ No data for {ticker}")
+        logging.warning(f"⚠️ {ticker}: No overview data returned.")
         return None
+
+    data["ticker"] = ticker
+    data["ingest_timestamp"] = datetime.utcnow().isoformat()
 
     return data
 
 # -----------------------------------------------------------
-# Async fetch loop
+# Direct-to-S3 JSON uploader
 # -----------------------------------------------------------
-CALL_DELAY = 0.5  # premium-safe
+def upload_json_to_s3(records):
+    timestamp = datetime.utcnow().strftime("%Y-%m-%d_%H%M%S")
+    s3_key = f"company_overview_json/overview_{timestamp}.json"
 
+    json_body = "\n".join(json.dumps(rec) for rec in records)
+
+    s3.put_object(
+        Bucket=S3_BUCKET_NAME,
+        Key=s3_key,
+        Body=json_body.encode("utf-8"),
+        ContentType="application/json"
+    )
+
+    logging.info(f"📤 Uploaded JSON → s3://{S3_BUCKET_NAME}/{s3_key}")
+
+# -----------------------------------------------------------
+# Async runner
+# -----------------------------------------------------------
 async def fetch_all_overviews(tickers):
     timeout = ClientTimeout(total=120)
     connector = aiohttp.TCPConnector(limit=120)
 
-    async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
+    all_records = []
+
+    async with ClientSession(timeout=timeout, connector=connector) as session:
         for i, ticker in enumerate(tickers, start=1):
-            logging.info(f"⏳ [{i}/{len(tickers)}] Fetching overview for {ticker}…")
+            logging.info(f"⏳ [{i}/{len(tickers)}] Fetching OVERVIEW for {ticker}…")
+            record = await fetch_overview(session, ticker)
 
-            data = await fetch_overview(session, ticker)
-
-            if data:
-                yield ticker, data
-                logging.info(f"✅ Completed {ticker}")
+            if record:
+                all_records.append(record)
+                logging.info(f"✅ {ticker} done")
             else:
-                logging.warning(f"❌ Skipped {ticker}")
+                logging.warning(f"❌ No data for {ticker}")
 
-            await asyncio.sleep(CALL_DELAY)
+            await asyncio.sleep(0.5)
 
-# -----------------------------------------------------------
-# Save + Upload JSON
-# -----------------------------------------------------------
-def save_and_upload_json(ticker, data):
-    filename = f"{ticker}.json"
-    local_path = f"./{filename}"
-
-    # Save JSON locally
-    with open(local_path, "w") as f:
-        json.dump(data, f)
-
-    # Upload to S3
-    s3_key = f"company_overview_json/{filename}"
-    s3_client.upload_file(local_path, S3_BUCKET_NAME, s3_key)
-
-    logging.info(f"📤 Uploaded {filename} to s3://{S3_BUCKET_NAME}/{s3_key}")
-
-    # Optional: delete local file afterward
-    os.remove(local_path)
+    return all_records
 
 # -----------------------------------------------------------
 # Main
 # -----------------------------------------------------------
 def main():
-    logging.info("🚀 STARTING COMPANY OVERVIEW JSON INGEST")
+    logging.info("🚀 STARTING ZERO-LOCAL JSON COMPANY OVERVIEW INGEST")
 
     tickers = fetch_sp500_tickers()
+    records = asyncio.run(fetch_all_overviews(tickers))
 
-    # Async driver
-    async def run():
-        async for ticker, data in fetch_all_overviews(tickers):
-            save_and_upload_json(ticker, data)
+    if not records:
+        logging.warning("⚠️ No company overview data returned.")
+        return
 
-    asyncio.run(run())
+    upload_json_to_s3(records)
 
-    logging.info("🎉 COMPLETE — All overview JSON files uploaded!")
+    logging.info("🎉 COMPLETE — JSON uploaded directly to S3!")
 
-# -----------------------------------------------------------
-# Run
-# -----------------------------------------------------------
 if __name__ == "__main__":
     main()
