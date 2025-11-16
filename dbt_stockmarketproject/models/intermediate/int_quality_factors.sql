@@ -13,7 +13,7 @@ WITH fundamentals AS (
 
 vol AS (
     SELECT
-        ticker,
+        stock_ticker,
         daily_volatility
     FROM {{ ref('int_price_momentum') }}
 )
@@ -29,7 +29,6 @@ SELECT
     v.daily_volatility,
     f.beta,
 
-    -- example quality index
     (
         COALESCE(f.return_on_equity, 0) +
         COALESCE(f.return_on_assets, 0) +
@@ -39,4 +38,4 @@ SELECT
 
 FROM fundamentals f
 LEFT JOIN vol v
-    ON f.ticker = v.ticker
+    ON f.ticker = v.stock_ticker

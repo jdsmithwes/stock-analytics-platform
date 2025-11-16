@@ -4,7 +4,13 @@ WITH fundamentals AS (
 ),
 
 momentum AS (
-    SELECT *
+    SELECT
+        stock_ticker,
+        avg_daily_return,
+        daily_volatility,
+        one_month_return,
+        three_month_return,
+        six_month_return
     FROM {{ ref('int_price_momentum') }}
 ),
 
@@ -14,12 +20,19 @@ sectors AS (
 ),
 
 growth AS (
-    SELECT *
+    SELECT
+        ticker,
+        quarterly_earnings_growth_yoy,
+        quarterly_revenue_growth_yoy,
+        blended_growth_score
     FROM {{ ref('int_growth_factors') }}
 ),
 
 quality AS (
-    SELECT *
+    SELECT
+        ticker,
+        gross_margin,
+        quality_score
     FROM {{ ref('int_quality_factors') }}
 )
 
@@ -33,7 +46,7 @@ SELECT
     -- PRICING
     --------------------------
     f.latest_close_price,
-    f.volume,
+    f.latest_volume,
     f.latest_price_date,
 
     --------------------------
@@ -85,6 +98,12 @@ SELECT
     RANK() OVER (ORDER BY q.quality_score DESC NULLS LAST) AS quality_rank
 
 FROM fundamentals f
-LEFT JOIN momentum m  ON f.ticker = m.ticker
-LEFT JOIN growth g    ON f.ticker = g.ticker
-LEFT JOIN quality q   ON f.ticker = q.ticker;
+
+LEFT JOIN momentum m
+    ON f.ticker = m.stock_ticker   -- 🔥 FIXED
+
+LEFT JOIN growth g
+    ON f.ticker = g.ticker         -- correct
+
+LEFT JOIN quality q
+    ON f.ticker = q.ticker         -- correct

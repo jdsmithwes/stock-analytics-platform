@@ -6,12 +6,12 @@ WITH fundamentals AS (
         eps,
         quarterly_earnings_growth_yoy,
         quarterly_revenue_growth_yoy
-    FROM {{ ref('stg_company_overview') }}
+    FROM {{ ref('stg_stockoverview') }}
 ),
 
 momentum AS (
     SELECT
-        ticker,
+        stock_ticker,
         one_month_return,
         three_month_return,
         six_month_return
@@ -30,7 +30,6 @@ SELECT
     m.three_month_return,
     m.six_month_return,
 
-    -- combined growth score (example)
     (
         COALESCE(f.quarterly_revenue_growth_yoy, 0) +
         COALESCE(f.quarterly_earnings_growth_yoy, 0) +
@@ -39,4 +38,4 @@ SELECT
 
 FROM fundamentals f
 LEFT JOIN momentum m
-    ON f.ticker = m.ticker
+    ON f.ticker = m.stock_ticker
