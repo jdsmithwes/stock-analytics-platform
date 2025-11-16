@@ -1,34 +1,26 @@
-with context_info as (
-    select
-        "Industry",
-        "SYMBOL",
-        "MarketCapitalization",
-        "EBITDA",
-        "PERatio",
-        "RevenueTTM",
-        "GrossProfitTTM",
-        "AnalystRatingStrongBuy",
-        "AnalystRatingBuy",
-        "AnalystRatingHold",
-        "AnalystRatingSell",
-        "AnalystRatingStrongSell"
-    from {{ ref('stg_stockoverview') }}
-    )
+WITH context_info AS (
 
-select
-    "Industry",
-    count(distinct "SYMBOL") as NumberOfCompanies,
-    avg("MarketCapitalization") as AvgMarketCapitalization,
-    avg("EBITDA") as AvgEBITDA,
-    avg("PERatio") as AvgPERatio,
-    avg("RevenueTTM") as AvgRevenueTTM,
-    avg("GrossProfitTTM") as AvgGrossProfitTTM,
-    count("AnalystRatingStrongBuy") as TotalStrongBuy,
-    count("AnalystRatingBuy") as TotalBuy,
-    count("AnalystRatingHold") as TotalHold,
-    count("AnalystRatingSell") as TotalSell,
-    count("AnalystRatingStrongSell") as TotalStrongSell
-from context_info
-group by "Industry"
-order by NumberOfCompanies desc
-    
+    SELECT
+        industry,
+        ticker,
+        market_cap,
+        ebitda,
+        pe_ratio,
+        revenue_ttm,
+        gross_profit_ttm
+    FROM {{ ref('stg_company_overview') }}
+
+)
+
+SELECT
+    industry,
+    COUNT(DISTINCT ticker)                       AS number_of_companies,
+    AVG(market_cap)                              AS avg_market_cap,
+    AVG(ebitda)                                   AS avg_ebitda,
+    AVG(pe_ratio)                                 AS avg_pe_ratio,
+    AVG(revenue_ttm)                              AS avg_revenue_ttm,
+    AVG(gross_profit_ttm)                         AS avg_gross_profit_ttm
+FROM context_info
+GROUP BY industry
+ORDER BY number_of_companies DESC;
+

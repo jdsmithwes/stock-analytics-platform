@@ -1,26 +1,29 @@
-with companydetails as (
-    select
-        "Ticker",
-        "Name",
-        "Description",
-        "Exchange",
-        "Currency",
-        "Sector",
-        "Industry",
-        "FiscalYearEnd",
-        "LatestQuarter",
-        "MarketCapitalization",
-        "SharesOutstanding",
-        "RevenueTTM" as Revenue,
-        "GrossProfitTTM" as GrossProfit,
-        "EBITDA",
-        "PERatio" as PE
-    from {{ ref('stg_stockoverview') }}
+WITH companydetails AS (
+
+    SELECT
+        ticker,
+        name,
+        description,
+        exchange,
+        currency,
+        sector,
+        industry,
+        fiscal_year_end,
+        latest_quarter,
+        market_cap,
+        shares_outstanding,
+        revenue_ttm            AS revenue,
+        gross_profit_ttm       AS gross_profit,
+        ebitda,
+        pe_ratio               AS pe
+    FROM {{ ref('stg_company_overview') }}
+
 )
 
-select * 
-from companydetails
-order by "MarketCapitalization" desc
+SELECT *
+FROM companydetails
+ORDER BY market_cap DESC;
+
 
 
 
