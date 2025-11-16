@@ -2,63 +2,180 @@ name: 'dbt_stockmarketproject'
 version: '1.0.0'
 config-version: 2
 
-profile: 'stock_data'
+profile: 'dbt_stockmarketproject'
 
-# -----------------------------------------------------------------------------
-#  GLOBAL PROJECT CONFIGURATION
-# -----------------------------------------------------------------------------
-model-paths: ['models']
-analysis-paths: ['analysis']
-test-paths: ['tests']
-seed-paths: ['seeds']
-macro-paths: ['macros']
-snapshot-paths: ['snapshots']
+model-paths: ["models"]
+analysis-paths: ["analysis"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
 
-target-path: 'target'
-clean-targets:
-  - 'target'
-  - 'dbt_packages'
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
 
-# -----------------------------------------------------------------------------
-#  MODEL CONFIGURATION
-# -----------------------------------------------------------------------------
 models:
   dbt_stockmarketproject:
 
     # ----------------------------
-    # STAGING MODELS
+    #  STAGING LAYER
     # ----------------------------
     staging:
-      +schema: STAGING
+      +schema: staging
       +materialized: view
-      +tags: ['staging']
+      +tags: ["staging"]
+
+      stock_data:
+        +tags: ["stock_price", "alpha_vantage"]
+
+      company_overview:
+        +tags: ["fundamentals", "company_info"]
 
     # ----------------------------
-    # INTERMEDIATE MODELS
+    #  INTERMEDIATE LAYER
     # ----------------------------
     intermediate:
-      +schema: INTERMEDIATE
+      +schema: intermediate
       +materialized: table
-      +tags: ['intermediate']
+      +tags: ["intermediate"]
+
+      # group by domain
+      fundamentals:
+        +tags: ["fundamentals"]
+
+      pricing:
+        +tags: ["stock_price", "momentum"]
+
+      sectors:
+        +tags: ["industry_analysis"]
+
+      growth:
+        +tags: ["growth"]
+
+      quality:
+        +tags: ["quality"]
 
     # ----------------------------
-    # ANALYTICS / FACT MODELS
+    #  MARTS LAYER
     # ----------------------------
-    analytics:
-      +schema: ANALYTICS
-      +materialized: table
-      +tags: ['analytics']
+    marts:
+      +schema: analytics
+      +materialized: view
+      +tags: ["mart", "analytics"]
 
-# -----------------------------------------------------------------------------
-#  TEST CONFIGURATION (OPTIONAL)
-# -----------------------------------------------------------------------------
-tests:
-  +severity: warn
+      finance:
+        +tags: ["finance", "fundamentals"]
 
-# -----------------------------------------------------------------------------
-#  QUOTING (SAFE DEFAULTS)
-# -----------------------------------------------------------------------------
-quoting:
-  database: false
-  schema: false
-  identifier: false
+      analytics:
+        +tags: ["analytics", "sector"]
+
+      dividends:
+        +tags: ["dividends"]
+
+semantic_models:
+  # ---------------------------------------------------------
+  #  SEMANTIC MODEL: COMPANY MASTER
+  # ---------------------------------------------------------
+  - name: company_master
+    model: ref('mart_company_master')
+
+    description: >
+      A curated semantic model combining fundamentals, growth, quality, momentum,
+      and valuation data for each publicly traded stock in the S&P 500 universe.
+
+    entities:
+      - name: ticker
+        type: primary
+
+    measures:
+      - name: avg_market_cap
+        agg: average
+        expr: market_cap
+      - name: total_market_cap
+        agg: sum
+        expr: market_cap
+      - name: avg_pe_ratio
+        agg: average
+        expr: pe_ratio
+      - name: avg_return_1m
+        agg: average
+        expr: one_month_return
+      - name: avg_quality_score
+        agg: average
+        expr: quality_score
+
+    dimensions:
+      - name: name
+        type: categorical
+      - name: sector
+        type: categorical
+      - name: industry
+        type: categorical
+      - name: latest_price_date
+        type: time
+
+  # ---------------------------------------------------------
+  #  SEMANTIC MODEL: PRICE HISTORY ENRICHED
+  # ---------------------------------------------------------
+  - name: price_history
+    model: ref('mart_price_history_enriched')
+
+    description: >
+      Enriched price history including returns, volatility, and joined fundamentals.
+
+    entities:
+      - name: stock_ticker
+        type: foreign
+        role: entity
+        ref: company_master.ticker
+
+    measures:
+      - name: avg_daily_return
+        agg: average
+        expr: daily_return
+      - name: avg_volume
+        agg: average
+        expr: trading_volume
+
+    dimensions:
+      - name: trading_date
+        type: time
+      - name: sector
+        type: categorical
+      - name: industry
+        type: categorical
+
+metrics:
+  # ---------------------------------------------------------
+  #  METRIC DEFINITIONS (dbt semantic layer)
+  # ---------------------------------------------------------
+
+  - name: total_market_cap
+    model: semantic_model:company_master
+    label: "Total Market Capitalization"
+    type: simple
+    agg: sum
+    expr: market_cap
+
+  - name: avg_pe_ratio
+    model: semantic_model:company_master
+    label: "Average PE Ratio"
+    type: simple
+    agg: average
+    expr: pe_ratio
+
+  - name: avg_return_1m
+    model: semantic_model:company_master
+    label: "Average 1-Month Return"
+    type: simple
+    agg: average
+    expr: one_month_return
+
+  - name: sector_avg_market_cap
+    model: semantic_model:company_master
+    type: derived
+    label: "Sector Average Market Cap"
+    calculation:
+      expr: avg_market_cap
+      group_by:
+        - sector
