@@ -10,6 +10,6 @@ sources:
       - name: stock_price_data_raw
         description: "Raw stock price OHLCV data."
 
-      - name: company_overview_raw
+      - name: company_overview_json_raw
         description: "Raw company fundamentals (quarterly)."
 
