@@ -1,7 +1,3 @@
-{{ config(
-    materialized = 'table',
-    post_hook = ["ALTER TABLE {{ this }} ADD CONSTRAINT pk_stockpricedata PRIMARY KEY (stock_ticker, trading_date)"]
-) }}
 
 with stockdata as (
     select
@@ -11,10 +7,13 @@ with stockdata as (
         HIGH as interday_high_price,
         LOW as interday_low_price,
         "CLOSE" as close_price,
-        VOLUME as trading_volume
+        VOLUME as trading_volume,
+        DIVIDEND_AMOUNT as dividend_amount,
+        SPLIT_COEFFICIENT as split_coefficient,
+        ADJUSTED_CLOSE as adjusted_close_price
         
 
-        from {{ source('stock_data', 'STOCKDATA_RAW') }}
+        from {{ source('stock_data', 'STOCK_PRICE_DATA') }}
 
     )
 
