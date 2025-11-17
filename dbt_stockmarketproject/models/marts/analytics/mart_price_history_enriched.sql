@@ -43,10 +43,10 @@ rolling AS (
 
 SELECT
     r.*,
-    o.sector,
-    o.industry,
-    o.market_cap,
-    o.beta
+    o.SECTOR,
+    o.INDUSTRY,
+    o.MARKETCAPITALIZATION,
+    o.BETA
 FROM rolling r
 LEFT JOIN {{ ref('stg_stockoverview') }} o
-    ON r.stock_ticker = o.ticker
+    ON r.stock_ticker = o.TICKER

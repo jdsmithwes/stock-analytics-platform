@@ -22,8 +22,8 @@ sectors AS (
 growth AS (
     SELECT
         ticker,
-        quarterly_earnings_growth_yoy,
-        quarterly_revenue_growth_yoy,
+        quarterlyearningsgrowthyoy AS quarterly_earnings_growth_yoy,
+        quarterlyrevenuegrowthyoy AS quarterly_revenue_growth_yoy,
         blended_growth_score
     FROM {{ ref('int_growth_factors') }}
 ),

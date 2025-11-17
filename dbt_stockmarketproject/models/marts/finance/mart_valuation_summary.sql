@@ -1,45 +1,48 @@
 WITH fundamentals AS (
     SELECT
-        ticker,
-        name,
-        sector,
-        industry,
-        market_cap,
-        pe_ratio,
-        price_to_sales_ttm,
-        price_to_book_ratio,
-        ev_to_ebitda,
-        ev_to_revenue,
-        eps
+        TICKER,
+        NAME,
+        SECTOR,
+        INDUSTRY,
+        MARKETCAPITALIZATION      AS MARKET_CAP,
+        PERATIO                   AS PE_RATIO,
+        PRICETOSALESTTM           AS PRICE_TO_SALES_TTM,
+        PRICETOBOOKRATIO          AS PRICE_TO_BOOK_RATIO,
+        EVTOEBITDA,
+        EVTOREVENUE,
+        EPS
     FROM {{ ref('stg_stockoverview') }}
 ),
 
 latest_price AS (
     SELECT
-        stock_ticker AS ticker,
-        close_price AS latest_close_price
+        STOCK_TICKER                  AS TICKER,
+        CLOSE_PRICE                   AS LATEST_CLOSE_PRICE
     FROM {{ ref('stg_stockpricedata') }}
     QUALIFY ROW_NUMBER() OVER (
-        PARTITION BY stock_ticker ORDER BY trading_date DESC
+        PARTITION BY STOCK_TICKER
+        ORDER BY TRADING_DATE DESC
     ) = 1
 )
 
 SELECT
-    f.ticker,
-    f.name,
-    f.sector,
-    f.industry,     -- 🔥 FIXED
-    f.market_cap,
-    f.pe_ratio,
-    f.price_to_sales_ttm,
-    f.price_to_book_ratio,
-    f.ev_to_ebitda,
-    f.ev_to_revenue,
+    f.TICKER,
+    f.NAME,
+    f.SECTOR,
+    f.INDUSTRY,
+    f.MARKET_CAP,
+    f.PE_RATIO,
+    f.PRICE_TO_SALES_TTM,
+    f.PRICE_TO_BOOK_RATIO,
+    f.EVTOEBITDA,
+    f.EVTOREVENUE,
+    l.LATEST_CLOSE_PRICE,
 
-    l.latest_close_price,
+    CASE 
+        WHEN f.EPS IS NOT NULL AND f.EPS != 0
+            THEN l.LATEST_CLOSE_PRICE / f.EPS
+    END AS PRICE_TO_EARNINGS_LATEST
 
-    CASE WHEN f.eps IS NOT NULL AND f.eps != 0
-         THEN l.latest_close_price / f.eps END AS price_to_earnings_latest
 FROM fundamentals f
 LEFT JOIN latest_price l
-    ON f.ticker = l.ticker
+    ON f.TICKER = l.TICKER
