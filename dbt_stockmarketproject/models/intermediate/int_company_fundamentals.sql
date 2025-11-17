@@ -1,5 +1,4 @@
 WITH fundamentals AS (
-
     SELECT
         TICKER,
         NAME,
@@ -48,30 +47,27 @@ WITH fundamentals AS (
         DIVIDENDDATE,
         EXDIVIDENDDATE,
         SOURCE_FILE,
-        INGEST_TIMESTAMP
+        LOAD_TIME            -- 👈 FIXED
     FROM {{ ref('stg_stockoverview') }}
-
 ),
 
 latest_price AS (
-
     SELECT
-        stock_ticker AS ticker,
-        close_price,
-        trading_volume,
-        trading_date
+        STOCK_TICKER AS TICKER,
+        CLOSE_PRICE,
+        TRADING_VOLUME,
+        TRADING_DATE
     FROM {{ ref('stg_stockpricedata') }}
     QUALIFY ROW_NUMBER() OVER (
-        PARTITION BY stock_ticker ORDER BY trading_date DESC
+        PARTITION BY STOCK_TICKER ORDER BY TRADING_DATE DESC
     ) = 1
 )
 
 SELECT
     f.*,
-    lp.close_price      AS latest_close_price,
-    lp.trading_volume   AS latest_volume,
-    lp.trading_date     AS latest_price_date
-
+    lp.CLOSE_PRICE     AS LATEST_CLOSE_PRICE,
+    lp.TRADING_VOLUME  AS LATEST_VOLUME,
+    lp.TRADING_DATE    AS LATEST_PRICE_DATE
 FROM fundamentals f
 LEFT JOIN latest_price lp
-    ON f.ticker = lp.ticker
+    ON f.TICKER = lp.TICKER

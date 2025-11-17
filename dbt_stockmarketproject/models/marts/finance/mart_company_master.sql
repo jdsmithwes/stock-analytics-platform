@@ -1,3 +1,5 @@
+{{ config(materialized='table') }}
+
 WITH fundamentals AS (
     SELECT *
     FROM {{ ref('int_company_fundamentals') }}
@@ -22,9 +24,9 @@ sectors AS (
 growth AS (
     SELECT
         ticker,
-        quarterlyearningsgrowthyoy AS quarterly_earnings_growth_yoy,
-        quarterlyrevenuegrowthyoy AS quarterly_revenue_growth_yoy,
-        blended_growth_score
+        earnings_growth_yoy AS quarterly_earnings_growth_yoy,
+        revenue_growth_yoy AS quarterly_revenue_growth_yoy,
+        blended_growth_score_weighted AS blended_growth_score
     FROM {{ ref('int_growth_factors') }}
 ),
 
@@ -52,20 +54,30 @@ SELECT
     --------------------------
     -- FUNDAMENTALS
     --------------------------
-    f.market_cap,
-    f.ebitda,
-    f.revenue_ttm,
-    f.gross_profit_ttm,
-    f.pe_ratio,
-    f.price_to_sales_ttm,
-    f.price_to_book_ratio,
-    f.ev_to_ebitda,
-    f.ev_to_revenue,
-    f.return_on_equity,
-    f.return_on_assets,
-    f.profit_margin,
-    f.operating_margin_ttm,
-    f.beta,
+    f.MARKETCAPITALIZATION          AS market_cap,
+    f.EBITDA                        AS ebitda,
+    f.PERATIO                       AS pe_ratio,
+    f.PEGRATIO                      AS peg_ratio,
+    f.BOOKVALUE                     AS book_value,
+    f.DIVIDENDPERSHARE              AS dividend_per_share,
+    f.DIVIDENDYIELD                 AS dividend_yield,
+    f.EPS                           AS eps,
+    f.REVENUEPERSHARETTM            AS revenue_per_share_ttm,
+    f.PROFITMARGIN                  AS profit_margin,
+    f.OPERATINGMARGINTTM            AS operating_margin_ttm,
+    f.RETURNONASSETS                AS return_on_assets,
+    f.RETURNONEQUITY                AS return_on_equity,
+    f.REVENUETTM                    AS revenue_ttm,
+    f.GROSSPROFITTTM                AS gross_profit_ttm,
+    f.DILUTEDEPSTTM                 AS diluted_eps_ttm,
+    f.ANALYSTTARGETPRICE            AS analyst_target_price,
+    f.TRAILINGPE                    AS trailing_pe,
+    f.FORWARDPE                     AS forward_pe,
+    f.PRICETOSALESTTM               AS price_to_sales_ttm,
+    f.PRICETOBOOKRATIO              AS price_to_book_ratio,
+    f.EVTOREVENUE                   AS ev_to_revenue,
+    f.EVTOEBITDA                    AS ev_to_ebitda,
+    f.BETA                          AS beta,
 
     --------------------------
     -- MOMENTUM
@@ -92,7 +104,7 @@ SELECT
     --------------------------
     -- DERIVED RANKS
     --------------------------
-    RANK() OVER (ORDER BY f.market_cap DESC) AS market_cap_rank,
+    RANK() OVER (ORDER BY f.MARKETCAPITALIZATION DESC) AS market_cap_rank,
     RANK() OVER (ORDER BY m.six_month_return DESC NULLS LAST) AS momentum_rank,
     RANK() OVER (ORDER BY g.blended_growth_score DESC NULLS LAST) AS growth_rank,
     RANK() OVER (ORDER BY q.quality_score DESC NULLS LAST) AS quality_rank
@@ -100,10 +112,12 @@ SELECT
 FROM fundamentals f
 
 LEFT JOIN momentum m
-    ON f.ticker = m.stock_ticker   -- 🔥 FIXED
+    ON f.ticker = m.stock_ticker
 
 LEFT JOIN growth g
-    ON f.ticker = g.ticker         -- correct
+    ON f.ticker = g.ticker
 
 LEFT JOIN quality q
-    ON f.ticker = q.ticker         -- correct
+    ON f.ticker = q.ticker
+
+ORDER BY f.MARKETCAPITALIZATION DESC

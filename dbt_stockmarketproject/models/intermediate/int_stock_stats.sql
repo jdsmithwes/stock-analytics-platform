@@ -75,4 +75,4 @@ SELECT
 
 FROM fundamentals f
 LEFT JOIN latest_price lp
-    ON f.ticker = lp.ticker;
+    ON f.ticker = lp.ticker

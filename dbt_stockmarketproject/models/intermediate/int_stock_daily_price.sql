@@ -1,16 +1,16 @@
 WITH base AS (
 
     SELECT
-        DATE                    AS trading_date,
-        TICKER                  AS stock_ticker,
-        OPEN                    AS open_price,
-        HIGH                    AS interday_high_price,
-        LOW                     AS interday_low_price,
-        CLOSE                   AS close_price,
-        ADJ_CLOSE               AS adjusted_close_price,
-        VOLUME                  AS trading_volume,
-        DIVIDEND                AS dividend_amount,
-        SPLIT                   AS split_coefficient
+        TRADING_DATE,
+        STOCK_TICKER,
+        OPEN_PRICE,
+        INTERDAY_HIGH_PRICE,
+        INTERDAY_LOW_PRICE,
+        CLOSE_PRICE,
+        ADJUSTED_CLOSE_PRICE,
+        TRADING_VOLUME,
+        DIVIDEND_AMOUNT,
+        SPLIT_COEFFICIENT
     FROM {{ ref('stg_stockpricedata') }}
 
 ),
@@ -18,22 +18,22 @@ WITH base AS (
 summary AS (
 
     SELECT
-        stock_ticker,
+        STOCK_TICKER,
 
-        MIN(trading_date)            AS first_trading_date,
-        MAX(trading_date)            AS last_trading_date,
+        MIN(TRADING_DATE)            AS FIRST_TRADING_DATE,
+        MAX(TRADING_DATE)            AS LAST_TRADING_DATE,
 
-        AVG(close_price)             AS avg_close_price,
-        MAX(interday_high_price)     AS all_time_high,
-        MIN(interday_low_price)      AS all_time_low,
+        AVG(CLOSE_PRICE)             AS AVG_CLOSE_PRICE,
+        MAX(INTERDAY_HIGH_PRICE)     AS ALL_TIME_HIGH,
+        MIN(INTERDAY_LOW_PRICE)      AS ALL_TIME_LOW,
 
-        SUM(trading_volume)          AS total_volume_traded,
-        MAX(trading_volume)          AS max_daily_volume,
+        SUM(TRADING_VOLUME)          AS TOTAL_VOLUME_TRADED,
+        MAX(TRADING_VOLUME)          AS MAX_DAILY_VOLUME,
 
-        SUM(dividend_amount)         AS total_dividends
+        SUM(DIVIDEND_AMOUNT)         AS TOTAL_DIVIDENDS
 
     FROM base
-    GROUP BY stock_ticker
+    GROUP BY STOCK_TICKER
 )
 
 SELECT *

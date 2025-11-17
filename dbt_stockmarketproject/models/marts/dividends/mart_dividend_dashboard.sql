@@ -1,46 +1,40 @@
-WITH fundamentals AS (
+WITH overview AS (
     SELECT
-        ticker,
-        name,
-        sector,
-        industry,
-        dividend_yield,
-        dividend_per_share,
-        dividend_date,
-        ex_dividend_date,
-        eps
+        TICKER,
+        NAME,
+        SECTOR,
+        INDUSTRY,
+        DIVIDENDPERSHARE,
+        DIVIDENDYIELD,        -- 👈 FIXED
+        DIVIDENDDATE,
+        EXDIVIDENDDATE
     FROM {{ ref('stg_stockoverview') }}
 ),
 
 latest_price AS (
     SELECT
-        stock_ticker AS ticker,
-        close_price AS latest_close_price
+        STOCK_TICKER AS TICKER,
+        CLOSE_PRICE AS LATEST_PRICE
     FROM {{ ref('stg_stockpricedata') }}
     QUALIFY ROW_NUMBER() OVER (
-        PARTITION BY stock_ticker ORDER BY trading_date DESC
+        PARTITION BY STOCK_TICKER ORDER BY TRADING_DATE DESC
     ) = 1
 )
 
 SELECT
-    f.ticker,
-    f.name,
-    f.sector,
-    f.industry,
-
-    f.dividend_yield,
-    f.dividend_per_share,
-    f.dividend_date,
-    f.ex_dividend_date,
-
-    CASE WHEN f.eps IS NOT NULL AND f.eps != 0
-         THEN f.dividend_per_share / f.eps END AS payout_ratio,
-
-    CASE WHEN l.latest_close_price IS NOT NULL AND f.dividend_per_share IS NOT NULL
-         THEN f.dividend_per_share / l.latest_close_price END AS dividend_yield_from_price,
-
-    l.latest_close_price
-
-FROM fundamentals f
+    o.TICKER,
+    o.NAME,
+    o.SECTOR,
+    o.INDUSTRY,
+    o.DIVIDENDPERSHARE,
+    o.DIVIDENDYIELD,
+    o.DIVIDENDDATE,
+    o.EXDIVIDENDDATE,
+    l.LATEST_PRICE,
+    CASE 
+        WHEN o.DIVIDENDPERSHARE IS NOT NULL AND o.DIVIDENDPERSHARE != 0
+            THEN o.DIVIDENDPERSHARE / NULLIF(l.LATEST_PRICE,0)
+    END AS DIVIDEND_PAYOUT_RATIO
+FROM overview o
 LEFT JOIN latest_price l
-    ON f.ticker = l.ticker
+    ON o.TICKER = l.TICKER
