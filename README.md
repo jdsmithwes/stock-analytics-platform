@@ -1,5 +1,7 @@
 # My First DBT Project
 
+## The Inspiration
+
 This project was inspired by stakeholders raising concerns about perfoming current data tasks in the future state data platform that will utilize DBT for data transformations. While other data engineers on my team exclaimed how straightforward DBT was, as a business analyst, I could understand the fears my stakeholders expressed. Github workflows and utilizing an IDE like VS Code can seem very complex to a non-technical professional.
 
 On a Saturday morning, I woke up and started to peruse the DBT labs website. I created a username and watched some of the training videos. Next, I started the jaffle shop guided exercise. Before starting any modules in the course, I signed into my dormant Github account and downloaded VS Code. In the past, when I tried to use VS Code, all the panels and options overwhelmed me and Iopted for tools such as PyCharm. While  most Github trainings walk through the concept of version control. I was lucky to stumble upon one that incorporated working with directories and the Github workflow. 
@@ -11,5 +13,15 @@ I originally intended to replicate the tech stack that the data platform being b
 I am so thankful that I made this decision. Snowflake is an amazing data warehouse. After completing the Jaffle-Shop exercise I felt that I needed to reinforce my learnings with something more hands-on that didn't have training wheels. With all sports betting companies advertisements and personal love of sport, I have longed for some time to injest data from an API for the NFL or NBA so that I could clean it and prep it to be run through some ML model to assist with predicting sports outcomes. Unfortunately, I couldn't find the sort of API I wanted related to sports, but knew there were plenty out there for financial data. I pivoted and decided to complete a data workflow that sought to forecast equity performance. 
 
 Since making that decison, I have learned so much and am constantly amazed at how fast time goes by when working on this project in my personal time. 😆😆😆
+
+## Biggest Lessons So Far.....
+
+
+
+
+
+
+
+## Learn From Generative AI..Just Don't Consume it
 
 
