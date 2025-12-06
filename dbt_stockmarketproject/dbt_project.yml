@@ -14,6 +14,8 @@ macro-paths: ["macros"]
 target-path: "target"
 clean-targets: ["target", "dbt_packages"]
 
+
+
 models:
   dbt_stockmarketproject:
 
