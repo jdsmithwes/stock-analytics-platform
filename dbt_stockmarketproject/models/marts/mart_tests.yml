@@ -1,0 +1,41 @@
+version: 2
+
+models:
+
+  - name: mart_company_master
+    description: "Final curated table containing fundamentals and price signals."
+
+    tests:
+      - unique: ticker
+      - not_null: ticker
+      - not_null: sector
+      - not_null: market_capitalization
+
+      - relationships:
+          field: ticker
+          to: ref('stg_stockpricedata')
+          column: stock_ticker
+
+      - dbt_utils.accepted_range:
+          column_name: market_capitalization
+          min_value: 0
+
+      - dbt_utils.accepted_range:
+          column_name: blended_growth_score
+          min_value: -1
+          max_value: 10
+
+  - name: mart_price_factors
+    tests:
+      - unique:
+          column_name: ["ticker", "trading_date"]
+
+      - not_null: ticker
+      - not_null: trading_date
+      - not_null: momentum_3m
+      - not_null: momentum_12m
+
+      - dbt_utils.accepted_range:
+          column_name: momentum_12m
+          min_value: -1
+          max_value: 10
