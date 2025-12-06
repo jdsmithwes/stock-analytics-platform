@@ -7,8 +7,8 @@ sources:
     description: "Raw Snowpipe-ingested data from S3"
 
     freshness:
-      warn_after: {count: 2, period: hour}
-      error_after: {count: 6, period: hour}
+      warn_after: {count: 2, period: day}
+      error_after: {count: 7, period: day}
 
     tables:
       - name: stock_price_data_raw
