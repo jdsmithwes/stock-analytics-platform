@@ -36,7 +36,7 @@ models:
                 min_value: -1
                 max_value: 1
 
-      - name: daily_volatility
+      - name: volatility_30d   # <-- corrected
         tests:
           - dbt_utils.accepted_range:
               arguments:
