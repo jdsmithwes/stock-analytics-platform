@@ -1,39 +1,50 @@
 {{ config(
-    materialized = 'incremental',
-    incremental_strategy = 'merge',
-    unique_key = ['stock_ticker', 'trading_date']
+    materialized='incremental',
+    unique_key='trading_date || \'-\' || ticker',
+    incremental_strategy='merge'
 ) }}
 
-with stockdata as (
-    select
-        TICKER as stock_ticker, 
-        "DATE" as trading_date,
-        "OPEN" as open_price,
-        HIGH as interday_high_price,
-        LOW as interday_low_price,
-        "CLOSE" as close_price,
-        VOLUME as trading_volume,
-        DIVIDEND_AMOUNT as dividend_amount,
-        SPLIT_COEFFICIENT as split_coefficient,
-        ADJUSTED_CLOSE as adjusted_close_price,
-        LOAD_TIME
-    from {{ source('stock_data', 'stock_price_data_raw') }}
+WITH raw AS (
 
-    {% if is_incremental() %}
-        -- Load only rows that arrived after the latest load_time already processed
-        where LOAD_TIME > (select max(LOAD_TIME) from {{ this }})
-    {% endif %}
+    SELECT
+        DATE                AS trading_date,
+        OPEN                AS open_price,
+        HIGH                AS high_price,
+        LOW                 AS low_price,
+        CLOSE               AS close_price,
+        ADJUSTED_CLOSE      AS adjusted_close_price,
+        VOLUME              AS volume,
+        DIVIDEND_AMOUNT     AS dividend_amount,
+        SPLIT_COEFFICIENT   AS split_coefficient,
+        TICKER              AS ticker,
+        LOAD_TIME
+    FROM {{ source('stock_data', 'stock_price_data_raw') }}
+
+),
+
+-- ❗ FIX: Snowflake requires aggregates to occur in SELECT/HAVING, not WHERE.
+-- So we separate MAX(load_time) into its own CTE.
+most_recent AS (
+    SELECT MAX(load_time) AS max_load_time
+    FROM raw
+),
+
+filtered AS (
+    SELECT r.*
+    FROM raw r
+    JOIN most_recent m
+        ON r.load_time = m.max_load_time
 )
 
-select
-    stock_ticker,
-    trading_date,
-    open_price,
-    interday_high_price,
-    interday_low_price,
-    close_price,
-    trading_volume,
-    dividend_amount,
-    split_coefficient,
-    adjusted_close_price
-from stockdata
+SELECT *
+FROM filtered
+
+{% if is_incremental() %}
+-- Only process records newer than the max existing trading_date
+WHERE trading_date > (
+        SELECT COALESCE(MAX(trading_date), '1900-01-01')
+        FROM {{ this }}
+    )
+{% endif %}
+
+
