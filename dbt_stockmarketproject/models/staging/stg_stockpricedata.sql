@@ -18,12 +18,10 @@ WITH raw AS (
         SPLIT_COEFFICIENT   AS split_coefficient,
         TICKER              AS ticker,
         LOAD_TIME
-    FROM {{ source('stock_data', 'stock_price_data_raw') }}
+    FROM {{ source('stock_data','stock_price_data_raw') }}
 
 ),
 
--- ❗ FIX: Snowflake requires aggregates to occur in SELECT/HAVING, not WHERE.
--- So we separate MAX(load_time) into its own CTE.
 most_recent AS (
     SELECT MAX(load_time) AS max_load_time
     FROM raw
@@ -40,11 +38,8 @@ SELECT *
 FROM filtered
 
 {% if is_incremental() %}
--- Only process records newer than the max existing trading_date
-WHERE trading_date > (
-        SELECT COALESCE(MAX(trading_date), '1900-01-01')
-        FROM {{ this }}
-    )
+QUALIFY trading_date > (
+    SELECT COALESCE(MAX(trading_date), '1900-01-01')
+    FROM {{ this }}
+)
 {% endif %}
-
-
