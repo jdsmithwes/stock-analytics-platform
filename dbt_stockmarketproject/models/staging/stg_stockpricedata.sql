@@ -1,6 +1,6 @@
 {{ config(
     materialized='incremental',
-    unique_key='trading_date || \'-\' || ticker',
+    unique_key="trading_date || '-' || ticker",
     incremental_strategy='merge'
 ) }}
 
@@ -47,4 +47,3 @@ filtered AS (
 
 SELECT *
 FROM {% if is_incremental() %} incremental_filtered {% else %} filtered {% endif %}
-
