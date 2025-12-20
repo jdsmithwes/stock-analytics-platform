@@ -3,48 +3,49 @@ import subprocess
 import os
 from pathlib import Path
 
-DBT_BIN = os.getenv("DBT_BIN", "dbt")
-
-DBT_PROJECT_DIR = Path(
-    os.getenv(
-        "DBT_PROJECT_DIR",
-        str(Path.home() / "dbt_stockmarketproject"),
-    )
-)
-
-DBT_PROFILES_DIR = Path(
-    os.getenv(
-        "DBT_PROFILES_DIR",
-        str(Path.home() / ".dbt"),
-    )
-)
-
 @op(
-    retry_policy=RetryPolicy(
-        max_retries=2,
-        delay=30,   # seconds
-    ),
+    retry_policy=RetryPolicy(max_retries=2, delay=30),
     tags={"tool": "dbt"},
 )
 def run_dbt_build():
     logger = get_dagster_logger()
 
-    if not DBT_PROJECT_DIR.exists():
-        raise FileNotFoundError(f"DBT project dir not found: {DBT_PROJECT_DIR}")
+    # Resolve env vars AT RUNTIME (critical)
+    dbt_bin = os.getenv("DBT_BIN", "dbt")
 
-    if not DBT_PROFILES_DIR.exists():
-        raise FileNotFoundError(f"DBT profiles dir not found: {DBT_PROFILES_DIR}")
+    dbt_project_dir = Path(
+        os.getenv(
+            "DBT_PROJECT_DIR",
+            str(Path.home() / "dbt_stockmarketproject"),
+        )
+    )
+
+    dbt_profiles_dir = Path(
+        os.getenv(
+            "DBT_PROFILES_DIR",
+            str(Path.home() / ".dbt"),
+        )
+    )
+
+    logger.info(f"DBT_PROJECT_DIR resolved to: {dbt_project_dir}")
+    logger.info(f"DBT_PROFILES_DIR resolved to: {dbt_profiles_dir}")
+
+    if not dbt_project_dir.exists():
+        raise FileNotFoundError(f"DBT project dir not found: {dbt_project_dir}")
+
+    if not dbt_profiles_dir.exists():
+        raise FileNotFoundError(f"DBT profiles dir not found: {dbt_profiles_dir}")
 
     cmd = [
-        DBT_BIN,
+        dbt_bin,
         "build",
         "--project-dir",
-        str(DBT_PROJECT_DIR),
+        str(dbt_project_dir),
         "--profiles-dir",
-        str(DBT_PROFILES_DIR),
+        str(dbt_profiles_dir),
     ]
 
-    logger.info(f"Executing: {' '.join(cmd)}")
+    logger.info(f"Running command: {' '.join(cmd)}")
 
     result = subprocess.run(
         cmd,
