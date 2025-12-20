@@ -19,17 +19,35 @@ clean-targets: ["target", "dbt_packages"]
 models:
   dbt_stockmarketproject:
 
+    # ======================
     # STAGING
+    # ======================
     staging:
       +schema: STAGING
       +materialized: view
 
+    # ======================
     # INTERMEDIATE
+    # ======================
     intermediate:
       +schema: INTERMEDIATE
       +materialized: table
 
+    # ======================
     # MARTS
+    # ======================
     marts:
       +schema: ANALYTICS
-      +materialized: view
+
+      # ----------------------
+      # DIMENSIONS
+      # ----------------------
+      dims:
+        +materialized: table
+
+      # ----------------------
+      # FACTS
+      # ----------------------
+      facts:
+        +materialized: incremental
+        +incremental_strategy: merge

@@ -1,41 +1,24 @@
-WITH daily_prices AS (
-    SELECT
-        stock_ticker,
-        trading_date,
-        close_price,
-        LAG(close_price) OVER (
-            PARTITION BY stock_ticker
-            ORDER BY trading_date
-        ) AS prev_close
-    FROM {{ ref('stg_stockpricedata') }}
-),
+{{ config(materialized='table') }}
 
-returns AS (
-    SELECT
-        stock_ticker,
-        trading_date,
-        close_price,
-        (close_price - prev_close) / prev_close AS daily_return
-    FROM daily_prices
-    WHERE prev_close IS NOT NULL
-),
-
-aggregates AS (
-    SELECT
-        stock_ticker,
-
-        AVG(daily_return) AS avg_daily_return,
-        STDDEV(daily_return) AS daily_volatility,
-
-        -- ⭐ FIXED: Snowflake-friendly window return calcs
-        SUM(IFF(trading_date >= DATEADD(month, -1, CURRENT_DATE), daily_return, 0)) AS one_month_return,
-        SUM(IFF(trading_date >= DATEADD(month, -3, CURRENT_DATE), daily_return, 0)) AS three_month_return,
-        SUM(IFF(trading_date >= DATEADD(month, -6, CURRENT_DATE), daily_return, 0)) AS six_month_return
-
-    FROM returns
-    GROUP BY stock_ticker
+with base as (
+    select
+        p.TICKER,
+        p.TRADING_DATE,
+        p.CLOSE_PRICE
+    from {{ ref('stg_stockpricedata') }} p
 )
 
-SELECT *
-FROM aggregates
+select
+    b.*,
+    (b.CLOSE_PRICE / nullif(lag(b.CLOSE_PRICE, 21)
+        over (partition by b.TICKER order by b.TRADING_DATE), 0)) - 1
+        as ONE_MONTH_RETURN,
 
+    (b.CLOSE_PRICE / nullif(lag(b.CLOSE_PRICE, 63)
+        over (partition by b.TICKER order by b.TRADING_DATE), 0)) - 1
+        as THREE_MONTH_RETURN,
+
+    (b.CLOSE_PRICE / nullif(lag(b.CLOSE_PRICE, 126)
+        over (partition by b.TICKER order by b.TRADING_DATE), 0)) - 1
+        as SIX_MONTH_RETURN
+from base b

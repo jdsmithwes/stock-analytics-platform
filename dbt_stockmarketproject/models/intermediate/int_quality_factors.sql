@@ -1,5 +1,7 @@
-WITH fundamentals AS (
-    SELECT
+{{ config(materialized='table') }}
+
+with fundamentals as (
+    select
         TICKER,
         RETURNONEQUITY,
         RETURNONASSETS,
@@ -8,37 +10,46 @@ WITH fundamentals AS (
         GROSSPROFITTTM,
         REVENUETTM,
         BETA
-    FROM {{ ref('stg_stockoverview') }}
+    from {{ ref('stg_stockoverview') }}
 ),
 
-vol AS (
-    SELECT
-        stock_ticker,
-        daily_volatility
-    FROM {{ ref('int_price_momentum') }}
+volatility as (
+    select
+        s.TICKER,
+
+        -- 30-day rolling volatility of daily returns
+        stddev(s.DAILY_RETURN)
+            over (
+                partition by s.TICKER
+                order by s.TRADING_DATE
+                rows between 29 preceding and current row
+            ) as DAILY_VOLATILITY
+
+    from {{ ref('int_stock_stats') }} s
 )
 
-SELECT
+select
     f.TICKER,
-    f.RETURNONEQUITY                  AS return_on_equity,
-    f.RETURNONASSETS                  AS return_on_assets,
-    f.PROFITMARGIN                    AS profit_margin,
-    f.OPERATINGMARGINTTM              AS operating_margin_ttm,
 
-    -- Gross margin safely calculated
-    f.GROSSPROFITTTM / NULLIF(f.REVENUETTM, 0) AS gross_margin,
+    f.RETURNONEQUITY       as return_on_equity,
+    f.RETURNONASSETS       as return_on_assets,
+    f.PROFITMARGIN         as profit_margin,
+    f.OPERATINGMARGINTTM   as operating_margin_ttm,
 
-    v.daily_volatility,
+    -- Gross margin (safe)
+    f.GROSSPROFITTTM / nullif(f.REVENUETTM, 0) as gross_margin,
+
+    v.DAILY_VOLATILITY,
     f.BETA,
 
     -- Unified quality score
     (
-        COALESCE(f.RETURNONEQUITY, 0) +
-        COALESCE(f.RETURNONASSETS, 0) +
-        COALESCE(f.PROFITMARGIN, 0) +
-        COALESCE(f.OPERATINGMARGINTTM, 0)
-    ) AS quality_score
+        coalesce(f.RETURNONEQUITY, 0) +
+        coalesce(f.RETURNONASSETS, 0) +
+        coalesce(f.PROFITMARGIN, 0) +
+        coalesce(f.OPERATINGMARGINTTM, 0)
+    ) as quality_score
 
-FROM fundamentals f
-LEFT JOIN vol v
-    ON f.TICKER = v.stock_ticker
+from fundamentals f
+left join volatility v
+    on f.TICKER = v.TICKER
