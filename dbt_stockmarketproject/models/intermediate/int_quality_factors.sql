@@ -13,7 +13,7 @@ WITH fundamentals AS (
 
 vol AS (
     SELECT
-        stock_ticker,
+        ticker,
         daily_volatility
     FROM {{ ref('int_price_momentum') }}
 )
@@ -41,4 +41,4 @@ SELECT
 
 FROM fundamentals f
 LEFT JOIN vol v
-    ON f.TICKER = v.stock_ticker
+    ON f.TICKER = v.ticker

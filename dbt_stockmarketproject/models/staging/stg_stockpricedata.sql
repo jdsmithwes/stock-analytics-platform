@@ -1,54 +1,41 @@
-{{ config(
-    materialized='incremental',
-    unique_key='trading_date || '-' || ticker',
-    incremental_strategy='merge'
-) }}
-
--- 1. Pull all raw rows
-WITH raw AS (
-    SELECT
-        DATE                AS trading_date,
-        OPEN                AS open_price,
-        HIGH                AS interday_high_price,
-        LOW                 AS interday_low_price,
-        CLOSE               AS close_price,
-        ADJUSTED_CLOSE      AS adjusted_close_price,
-        VOLUME              AS trading_volume,
-        DIVIDEND_AMOUNT     AS dividend_amount,
-        SPLIT_COEFFICIENT   AS split_coefficient,
-        TICKER              AS ticker,
-        LOAD_TIME
-    FROM {{ source('stock_data','stock_price_data_raw') }}
-),
-
--- 2. Identify the latest load batch in the RAW table
-latest_batch AS (
-    SELECT MAX(load_time) AS max_load_time
-    FROM raw
-),
-
--- 3. Select only rows from the most recent batch
-current_batch AS (
-    SELECT r.*
-    FROM raw r
-    JOIN latest_batch b
-      ON r.load_time = b.max_load_time
-)
-
-{% if is_incremental() %}
-
--- 4. When incrementally refreshing, ONLY load new load batches
-, incremental_rows AS (
-    SELECT *
-    FROM current_batch
-    WHERE load_time > (
-        SELECT COALESCE(MAX(load_time), '1900-01-01')
-        FROM {{ this }}
+{{
+    config(
+        materialized='incremental',
+        unique_key = ['TICKER', 'TRADING_DATE']
     )
+}}
+
+with raw as (
+
+    select
+        r.TICKER                                   as TICKER,
+        r.DATE::date                              as TRADING_DATE,
+
+        -- canonical price fields
+        r.OPEN::float                             as OPEN_PRICE,
+        r.HIGH::float                             as HIGH_PRICE,
+        r.LOW::float                              as LOW_PRICE,
+        r.CLOSE::float                            as CLOSE_PRICE,
+        r.ADJUSTED_CLOSE::float                   as ADJUSTED_CLOSE_PRICE,
+
+        r.VOLUME::number                          as VOLUME,
+        r.DIVIDEND_AMOUNT::float                  as DIVIDEND_AMOUNT,
+        r.SPLIT_COEFFICIENT::float                as SPLIT_COEFFICIENT,
+
+        r.LOAD_TIME                               as LOAD_TIME
+
+    from {{ source('stock_data', 'stock_price_data_raw') }} r
+
+    {% if is_incremental() %}
+        where r.LOAD_TIME >
+            (
+                select coalesce(max(t.LOAD_TIME), '1900-01-01'::timestamp_ntz)
+                from {{ this }} t
+            )
+    {% endif %}
+
 )
 
-{% endif %}
-
--- 5. Final select
-SELECT *
-FROM {% if is_incremental() %} incremental_rows {% else %} current_batch {% endif %}
+select *
+from raw
+where TICKER is not null

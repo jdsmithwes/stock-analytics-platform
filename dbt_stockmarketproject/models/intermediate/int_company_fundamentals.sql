@@ -1,73 +1,25 @@
-WITH fundamentals AS (
-    SELECT
-        TICKER,
-        NAME,
-        ASSETTYPE,
-        DESCRIPTION,
-        CIK,
-        EXCHANGE,
-        CURRENCY,
-        COUNTRY,
-        SECTOR,
-        INDUSTRY,
-        ADDRESS,
-        FISCALYEAREND,
-        LATESTQUARTER,
-        MARKETCAPITALIZATION,
-        EBITDA,
-        PERATIO,
-        PEGRATIO,
-        BOOKVALUE,
-        DIVIDENDPERSHARE,
-        DIVIDENDYIELD,
-        EPS,
-        REVENUEPERSHARETTM,
-        PROFITMARGIN,
-        OPERATINGMARGINTTM,
-        RETURNONASSETS,
-        RETURNONEQUITY,
-        REVENUETTM,
-        GROSSPROFITTTM,
-        DILUTEDEPSTTM,
-        QUARTERLYEARNINGSGROWTHYOY,
-        QUARTERLYREVENUEGROWTHYOY,
-        ANALYSTTARGETPRICE,
-        TRAILINGPE,
-        FORWARDPE,
-        PRICETOSALESTTM,
-        PRICETOBOOKRATIO,
-        EVTOREVENUE,
-        EVTOEBITDA,
-        BETA,
-        WEEK52HIGH,
-        WEEK52LOW,
-        DAY50MOVINGAVERAGE,
-        DAY200MOVINGAVERAGE,
-        SHARESOUTSTANDING,
-        DIVIDENDDATE,
-        EXDIVIDENDDATE,
-        SOURCE_FILE,
-        LOAD_TIME            -- 👈 FIXED
-    FROM {{ ref('stg_stockoverview') }}
+{{ config(materialized='table') }}
+
+with fundamentals as (
+    select *
+    from {{ ref('int_stock_overview') }}
 ),
 
-latest_price AS (
-    SELECT
-        STOCK_TICKER AS TICKER,
-        CLOSE_PRICE,
-        TRADING_VOLUME,
-        TRADING_DATE
-    FROM {{ ref('stg_stockpricedata') }}
-    QUALIFY ROW_NUMBER() OVER (
-        PARTITION BY STOCK_TICKER ORDER BY TRADING_DATE DESC
-    ) = 1
+latest_price as (
+    select
+        p.TICKER,
+        p.TRADING_DATE,
+        p.CLOSE_PRICE,
+        row_number()
+            over (partition by p.TICKER order by p.TRADING_DATE desc) as RN
+    from {{ ref('stg_stockpricedata') }} p
 )
 
-SELECT
+select
     f.*,
-    lp.CLOSE_PRICE     AS LATEST_CLOSE_PRICE,
-    lp.TRADING_VOLUME  AS LATEST_VOLUME,
-    lp.TRADING_DATE    AS LATEST_PRICE_DATE
-FROM fundamentals f
-LEFT JOIN latest_price lp
-    ON f.TICKER = lp.TICKER
+    lp.TRADING_DATE      as LATEST_TRADING_DATE,
+    lp.CLOSE_PRICE       as LATEST_CLOSE_PRICE
+from fundamentals f
+left join latest_price lp
+    on f.TICKER = lp.TICKER
+   and lp.RN = 1

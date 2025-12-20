@@ -7,7 +7,7 @@ WITH fundamentals AS (
 
 momentum AS (
     SELECT
-        stock_ticker,
+        ticker,
         avg_daily_return,
         daily_volatility,
         one_month_return,
@@ -112,7 +112,7 @@ SELECT
 FROM fundamentals f
 
 LEFT JOIN momentum m
-    ON f.ticker = m.stock_ticker
+    ON f.ticker = m.ticker
 
 LEFT JOIN growth g
     ON f.ticker = g.ticker

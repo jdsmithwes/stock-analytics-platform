@@ -1,78 +1,30 @@
-WITH fundamentals AS (
+{{ config(materialized='table') }}
 
-    SELECT
-        TICKER,
-        NAME,
-        ASSETTYPE,
-        DESCRIPTION,
-        CIK,
-        EXCHANGE,
-        CURRENCY,
-        COUNTRY,
-        SECTOR,
-        INDUSTRY,
-        ADDRESS,
-        FISCALYEAREND,
-        LATESTQUARTER,
-        MARKETCAPITALIZATION,
-        EBITDA,
-        PERATIO,
-        PEGRATIO,
-        BOOKVALUE,
-        DIVIDENDPERSHARE,
-        DIVIDENDYIELD,
-        EPS,
-        REVENUEPERSHARETTM,
-        PROFITMARGIN,
-        OPERATINGMARGINTTM,
-        RETURNONASSETS,
-        RETURNONEQUITY,
-        REVENUETTM,
-        GROSSPROFITTTM,
-        DILUTEDEPSTTM,
-        QUARTERLYEARNINGSGROWTHYOY,
-        QUARTERLYREVENUEGROWTHYOY,
-        ANALYSTTARGETPRICE,
-        TRAILINGPE,
-        FORWARDPE,
-        PRICETOSALESTTM,
-        PRICETOBOOKRATIO,
-        EVTOREVENUE,
-        EVTOEBITDA,
-        BETA,
-        WEEK52HIGH,
-        WEEK52LOW,
-        DAY50MOVINGAVERAGE,
-        DAY200MOVINGAVERAGE,
-        SHARESOUTSTANDING,
-        DIVIDENDDATE,
-        EXDIVIDENDDATE,
-        SOURCE_FILE,
-        LOAD_TIME
-    FROM {{ ref('stg_stockoverview') }}
-
+with base as (
+    select
+        p.TICKER,
+        p.TRADING_DATE,
+        p.CLOSE_PRICE,
+        p.VOLUME
+    from {{ ref('stg_stockpricedata') }} p
 ),
 
-latest_price AS (
+stats as (
+    select
+        b.*,
+        lag(b.CLOSE_PRICE)
+            over (partition by b.TICKER order by b.TRADING_DATE) as PREV_CLOSE_PRICE,
 
-    SELECT
-        stock_ticker AS ticker,
-        close_price,
-        trading_volume,
-        trading_date
-    FROM {{ ref('stg_stockpricedata') }}
-    QUALIFY ROW_NUMBER() OVER (
-        PARTITION BY stock_ticker
-        ORDER BY trading_date DESC
-    ) = 1
+        case
+            when lag(b.CLOSE_PRICE)
+                 over (partition by b.TICKER order by b.TRADING_DATE) = 0 then null
+            else
+                (b.CLOSE_PRICE /
+                 lag(b.CLOSE_PRICE)
+                 over (partition by b.TICKER order by b.TRADING_DATE)) - 1
+        end as DAILY_RETURN
+    from base b
 )
 
-SELECT
-    f.*,
-    lp.close_price      AS latest_close_price,
-    lp.trading_volume   AS latest_volume,
-    lp.trading_date     AS latest_price_date
-
-FROM fundamentals f
-LEFT JOIN latest_price lp
-    ON f.ticker = lp.ticker
+select *
+from stats

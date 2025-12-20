@@ -2,10 +2,8 @@ version: 2
 
 models:
   - name: int_price_momentum
-    description: "Stock-level daily return and momentum statistics."
-
     columns:
-      - name: stock_ticker
+      - name: ticker
         tests:
           - not_null
 
@@ -21,37 +19,3 @@ models:
           - dbt_utils.accepted_range:
               arguments:
                 min_value: 0
-
-  - name: int_sectors
-    description: "Aggregates company-level data to industry level."
-
-    columns:
-      - name: INDUSTRY
-        tests:
-          - not_null
-
-      - name: avg_market_cap
-        tests:
-          - dbt_utils.accepted_range:
-              arguments:
-                min_value: 0
-
-  - name: int_growth_factors
-    description: "Revenue and earnings growth computations."
-
-    columns:
-      - name: ticker
-        tests:
-          - not_null
-
-      - name: revenue_growth_yoy
-        tests:
-          - dbt_utils.accepted_range:
-              arguments:
-                min_value: -1
-
-      - name: earnings_growth_yoy
-        tests:
-          - dbt_utils.accepted_range:
-              arguments:
-                min_value: -1

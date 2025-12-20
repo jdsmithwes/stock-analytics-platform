@@ -1,40 +1,15 @@
-WITH base AS (
+{{ config(materialized='table') }}
 
-    SELECT
-        TRADING_DATE,
-        STOCK_TICKER,
-        OPEN_PRICE,
-        INTERDAY_HIGH_PRICE,
-        INTERDAY_LOW_PRICE,
-        CLOSE_PRICE,
-        ADJUSTED_CLOSE_PRICE,
-        TRADING_VOLUME,
-        DIVIDEND_AMOUNT,
-        SPLIT_COEFFICIENT
-    FROM {{ ref('stg_stockpricedata') }}
-
-),
-
-summary AS (
-
-    SELECT
-        STOCK_TICKER,
-
-        MIN(TRADING_DATE)            AS FIRST_TRADING_DATE,
-        MAX(TRADING_DATE)            AS LAST_TRADING_DATE,
-
-        AVG(CLOSE_PRICE)             AS AVG_CLOSE_PRICE,
-        MAX(INTERDAY_HIGH_PRICE)     AS ALL_TIME_HIGH,
-        MIN(INTERDAY_LOW_PRICE)      AS ALL_TIME_LOW,
-
-        SUM(TRADING_VOLUME)          AS TOTAL_VOLUME_TRADED,
-        MAX(TRADING_VOLUME)          AS MAX_DAILY_VOLUME,
-
-        SUM(DIVIDEND_AMOUNT)         AS TOTAL_DIVIDENDS
-
-    FROM base
-    GROUP BY STOCK_TICKER
-)
-
-SELECT *
-FROM summary
+select
+    p.TICKER,
+    p.TRADING_DATE,
+    p.OPEN_PRICE,
+    p.HIGH_PRICE,
+    p.LOW_PRICE,
+    p.CLOSE_PRICE,
+    p.ADJUSTED_CLOSE_PRICE,
+    p.VOLUME,
+    p.DIVIDEND_AMOUNT,
+    p.SPLIT_COEFFICIENT,
+    p.LOAD_TIME
+from {{ ref('stg_stockpricedata') }} p
