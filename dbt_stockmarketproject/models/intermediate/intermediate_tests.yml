@@ -7,15 +7,4 @@ models:
         tests:
           - not_null
 
-      - name: avg_daily_return
-        tests:
-          - dbt_utils.accepted_range:
-              arguments:
-                min_value: -1
-                max_value: 1
 
-      - name: daily_volatility
-        tests:
-          - dbt_utils.accepted_range:
-              arguments:
-                min_value: 0

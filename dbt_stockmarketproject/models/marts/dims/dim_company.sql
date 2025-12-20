@@ -4,9 +4,9 @@
 
 select
     ticker,
-    company_name,
+    name as company_name,
     sector,
     industry,
     country,
     exchange
-from {{ ref('stg_company_overview') }}
+from {{ ref('stg_stockoverview') }}

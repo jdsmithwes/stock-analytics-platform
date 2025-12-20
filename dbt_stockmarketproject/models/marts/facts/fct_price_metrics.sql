@@ -1,20 +1,18 @@
 {{ config(
     materialized = 'incremental',
-    unique_key = ['ticker','trade_date'],
+    unique_key = ['ticker','trading_date'],
     incremental_strategy = 'merge'
 ) }}
 
 select
     ticker,
-    trade_date,
-    daily_return,
+    trading_date,
     one_month_return,
-    three_month_return,
-    load_time
-from {{ ref('int_price_returns') }}
+    three_month_return
+from {{ ref('int_price_momentum') }}
 
 {% if is_incremental() %}
-where trade_date > (
-    select max(trade_date) from {{ this }}
+where trading_date > (
+    select max(trading_date) from {{ this }}
 )
 {% endif %}
