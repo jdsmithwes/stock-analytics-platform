@@ -1,7 +1,9 @@
+
 from dagster import op, get_dagster_logger, RetryPolicy
 import subprocess
 import os
 from pathlib import Path
+
 
 @op(
     retry_policy=RetryPolicy(max_retries=2, delay=30),
@@ -10,13 +12,14 @@ from pathlib import Path
 def run_dbt_build():
     logger = get_dagster_logger()
 
-    # Resolve env vars AT RUNTIME (critical)
+    # Resolve dbt binary at runtime
     dbt_bin = os.getenv("DBT_BIN", "dbt")
 
+    # ✅ FIX: default to INNER dbt project directory
     dbt_project_dir = Path(
         os.getenv(
             "DBT_PROJECT_DIR",
-            str(Path.home() / "dbt_stockmarketproject"),
+            str(Path.home() / "dbt_stockmarket" / "dbt_stockmarket"),
         )
     )
 
@@ -30,12 +33,24 @@ def run_dbt_build():
     logger.info(f"DBT_PROJECT_DIR resolved to: {dbt_project_dir}")
     logger.info(f"DBT_PROFILES_DIR resolved to: {dbt_profiles_dir}")
 
+    # ---- Hard validation (fail fast, fail clearly) ----
     if not dbt_project_dir.exists():
-        raise FileNotFoundError(f"DBT project dir not found: {dbt_project_dir}")
+        raise FileNotFoundError(
+            f"DBT project directory not found: {dbt_project_dir}"
+        )
+
+    project_file = dbt_project_dir / "dbt_project.yml"
+    if not project_file.exists():
+        raise FileNotFoundError(
+            f"dbt_project.yml not found in {dbt_project_dir}"
+        )
 
     if not dbt_profiles_dir.exists():
-        raise FileNotFoundError(f"DBT profiles dir not found: {dbt_profiles_dir}")
+        raise FileNotFoundError(
+            f"DBT profiles directory not found: {dbt_profiles_dir}"
+        )
 
+    # ---- Build command ----
     cmd = [
         dbt_bin,
         "build",
@@ -53,10 +68,18 @@ def run_dbt_build():
         text=True,
     )
 
-    logger.info(result.stdout)
+    # Always log stdout (dbt progress)
+    if result.stdout:
+        logger.info(result.stdout)
 
+    # Fail loudly and informatively
     if result.returncode != 0:
-        logger.error(result.stderr)
-        raise RuntimeError("dbt build failed")
+        logger.error("dbt build failed")
+        if result.stderr:
+            logger.error(result.stderr)
+
+        raise RuntimeError(
+            f"dbt build failed with exit code {result.returncode}"
+        )
 
     logger.info("dbt build completed successfully")
