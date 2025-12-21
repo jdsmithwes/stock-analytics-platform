@@ -1,10 +1,11 @@
+# Virtual environments
+dagster-env/
 venv/
-.env
+
+# Editable install artifacts
+*.egg-info/
+
+# Python cache
 __pycache__/
-target/
-logs/
 *.pyc
-.DS_Store
-.tmp
-.vscode
 
