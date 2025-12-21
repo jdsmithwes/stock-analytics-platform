@@ -1,6 +1,7 @@
 from dagster import run_status_sensor, DagsterRunStatus
 from notifications.sns import send_sns
 
+
 @run_status_sensor(
     run_status=DagsterRunStatus.SUCCESS,
     request_job=None,
@@ -15,9 +16,9 @@ Dagster job completed successfully.
 
 Job: {run.job_name}
 Run ID: {run.run_id}
-Repository: {context.repository_name}
 """,
     )
+
 
 @run_status_sensor(
     run_status=DagsterRunStatus.FAILURE,
@@ -33,8 +34,8 @@ Dagster job FAILED.
 
 Job: {run.job_name}
 Run ID: {run.run_id}
-Repository: {context.repository_name}
 
 Check Dagster UI for logs.
 """,
     )
+
