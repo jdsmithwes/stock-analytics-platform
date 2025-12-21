@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stockapi-analytics-platform"
+version = "0.1.0"
+description = "Dagster + dbt monorepo for stock analytics"
+requires-python = ">=3.9"
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["."]
+

@@ -1,99 +1,59 @@
-
-from dagster import op, get_dagster_logger, RetryPolicy
-import subprocess
-import os
 from pathlib import Path
+import os
+import subprocess
+from dagster import op, get_dagster_logger
 
 
-@op(
-    retry_policy=RetryPolicy(max_retries=2, delay=30),
-    tags={"tool": "dbt"},
-)
+@op
 def run_dbt_build():
     logger = get_dagster_logger()
 
-    # ------------------------------------------------------------------
-    # Resolve dbt binary (explicit is better than implicit in prod)
-    # ------------------------------------------------------------------
-    dbt_bin = os.getenv("DBT_BIN", "/home/ec2-user/dagster-env/bin/dbt")
+    # Resolve repo root
+    repo_root = Path(__file__).resolve().parents[2]
 
-    # ------------------------------------------------------------------
-    # Resolve dbt project directory (INNER project directory)
-    # ------------------------------------------------------------------
-    dbt_project_dir = Path(
-        os.getenv(
-            "DBT_PROJECT_DIR",
-            "/home/ec2-user/dbt_stockmarketproject/dbt_stockmarketproject",
-        )
-    )
+    # Correct dbt project path
+    dbt_project_dir = repo_root / "dbt" / "dbt_stockmarketproject"
 
-    # ------------------------------------------------------------------
-    # Resolve dbt profiles directory
-    # ------------------------------------------------------------------
+    # Correct, portable profiles dir
     dbt_profiles_dir = Path(
-        os.getenv(
-            "DBT_PROFILES_DIR",
-            "/home/ec2-user/.dbt",
-        )
-    )
+        os.getenv("DBT_PROFILES_DIR", Path.home() / ".dbt")
+    ).expanduser()
 
-    # ------------------------------------------------------------------
-    # Log resolved paths (critical for debugging in Dagster UI)
-    # ------------------------------------------------------------------
-    logger.info(f"DBT_BIN resolved to: {dbt_bin}")
-    logger.info(f"DBT_PROJECT_DIR resolved to: {dbt_project_dir}")
-    logger.info(f"DBT_PROFILES_DIR resolved to: {dbt_profiles_dir}")
+    dbt_bin = os.getenv("DBT_BIN", "dbt")
 
-    # ------------------------------------------------------------------
-    # Fail fast if paths are incorrect
-    # ------------------------------------------------------------------
+    logger.info(f"repo_root={repo_root}")
+    logger.info(f"DBT_PROJECT_DIR={dbt_project_dir}")
+    logger.info(f"DBT_PROFILES_DIR={dbt_profiles_dir}")
+    logger.info(f"DBT_BIN={dbt_bin}")
+
     if not dbt_project_dir.exists():
-        raise FileNotFoundError(
-            f"DBT project directory not found: {dbt_project_dir}"
-        )
-
-    if not (dbt_project_dir / "dbt_project.yml").exists():
-        raise FileNotFoundError(
-            f"dbt_project.yml not found in {dbt_project_dir}"
-        )
+        raise FileNotFoundError(f"DBT project directory not found: {dbt_project_dir}")
 
     if not dbt_profiles_dir.exists():
-        raise FileNotFoundError(
-            f"DBT profiles directory not found: {dbt_profiles_dir}"
-        )
+        raise FileNotFoundError(f"DBT profiles directory not found: {dbt_profiles_dir}")
 
-    # ------------------------------------------------------------------
-    # Build dbt command
-    # ------------------------------------------------------------------
-    cmd = [
-        dbt_bin,
-        "build",
-        "--project-dir",
-        str(dbt_project_dir),
-        "--profiles-dir",
-        str(dbt_profiles_dir),
+    commands = [
+        [dbt_bin, "deps"],
+        [dbt_bin, "build"],
     ]
 
-    logger.info(f"Running command: {' '.join(cmd)}")
+    for cmd in commands:
+        logger.info(f"Running command: {' '.join(cmd)}")
 
-    # ------------------------------------------------------------------
-    # Execute dbt
-    # ------------------------------------------------------------------
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-    )
-
-    if result.stdout:
-        logger.info(result.stdout)
-
-    if result.returncode != 0:
-        if result.stderr:
-            logger.error(result.stderr)
-
-        raise RuntimeError(
-            f"dbt build failed with exit code {result.returncode}"
+        result = subprocess.run(
+            cmd + [
+                "--project-dir", str(dbt_project_dir),
+                "--profiles-dir", str(dbt_profiles_dir),
+            ],
+            cwd=str(dbt_project_dir),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
         )
 
-    logger.info("dbt build completed successfully")
+        logger.info(result.stdout)
+
+        if result.returncode != 0:
+            raise RuntimeError(f"dbt command failed: {' '.join(cmd)}")
+
+    logger.info("dbt deps + dbt build completed successfully")

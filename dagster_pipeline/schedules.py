@@ -1,10 +1,10 @@
 from dagster import schedule
-from jobs import dbt_job
+from dagster_pipeline.jobs import dbt_job
 
 @schedule(
-    cron_schedule="30 23 * * *",
-    execution_timezone="US/Eastern",
+    cron_schedule="0 23 * * *",  # nightly at 11 PM
     job=dbt_job,
+    execution_timezone="US/Eastern",
 )
-def nightly_dbt_schedule():
+def nightly_dbt_schedule(_context):
     return {}

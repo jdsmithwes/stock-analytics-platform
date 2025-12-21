@@ -1,41 +1,18 @@
 from dagster import run_status_sensor, DagsterRunStatus
-from notifications.sns import send_sns
+from dagster_pipeline.notifications.sns import send_sns
 
 
-@run_status_sensor(
-    run_status=DagsterRunStatus.SUCCESS,
-    request_job=None,
-)
+@run_status_sensor(run_status=DagsterRunStatus.SUCCESS)
 def dagster_job_success_sensor(context):
-    run = context.dagster_run
-
     send_sns(
-        subject=f"✅ Dagster Job Succeeded: {run.job_name}",
-        message=f"""
-Dagster job completed successfully.
-
-Job: {run.job_name}
-Run ID: {run.run_id}
-""",
+        subject="Dagster Job Succeeded",
+        message=f"Dagster job {context.dagster_run.job_name} succeeded."
     )
 
 
-@run_status_sensor(
-    run_status=DagsterRunStatus.FAILURE,
-    request_job=None,
-)
+@run_status_sensor(run_status=DagsterRunStatus.FAILURE)
 def dagster_job_failure_sensor(context):
-    run = context.dagster_run
-
     send_sns(
-        subject=f"❌ Dagster Job FAILED: {run.job_name}",
-        message=f"""
-Dagster job FAILED.
-
-Job: {run.job_name}
-Run ID: {run.run_id}
-
-Check Dagster UI for logs.
-""",
+        subject="Dagster Job Failed",
+        message=f"Dagster job {context.dagster_run.job_name} failed."
     )
-
