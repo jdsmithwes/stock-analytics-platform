@@ -1,0 +1,7 @@
+asyncio
+aiohttp
+pandas 
+boto3
+tenacity
+
+

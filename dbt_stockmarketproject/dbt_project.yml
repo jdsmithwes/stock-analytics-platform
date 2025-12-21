@@ -1,0 +1,53 @@
+name: "dbt_stockmarketproject"
+version: "1.0.0"
+config-version: 2
+
+profile: "dbt_stockmarketproject"
+
+model-paths: ["models"]
+test-paths: ["tests"]
+analysis-paths: ["analysis"]
+seed-paths: ["seeds"]
+snapshot-paths: ["snapshots"]
+macro-paths: ["macros"]
+
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+
+
+models:
+  dbt_stockmarketproject:
+
+    # ======================
+    # STAGING
+    # ======================
+    staging:
+      +schema: STAGING
+      +materialized: view
+
+    # ======================
+    # INTERMEDIATE
+    # ======================
+    intermediate:
+      +schema: INTERMEDIATE
+      +materialized: table
+
+    # ======================
+    # MARTS
+    # ======================
+    marts:
+      +schema: ANALYTICS
+
+      # ----------------------
+      # DIMENSIONS
+      # ----------------------
+      dims:
+        +materialized: table
+
+      # ----------------------
+      # FACTS
+      # ----------------------
+      facts:
+        +materialized: incremental
+        +incremental_strategy: merge

@@ -1,4 +1,19 @@
 {
-    "python-envs.defaultEnvManager": "ms-python.python:system",
-    "python-envs.pythonProjects": []
+  // --------------------
+  // Dagster
+  // --------------------
+  "python.defaultInterpreterPath": "./dagster-env/bin/python",
+  "python.analysis.extraPaths": ["./dagster"],
+
+  // --------------------
+  // dbt
+  // --------------------
+  "dbt.dbtPath": "dbt",
+  "dbt.profilesDir": "./dbt/dbt_stockmarketproject",
+
+  // --------------------
+  // General
+  // --------------------
+  "editor.formatOnSave": true
 }
+

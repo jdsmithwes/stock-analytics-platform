@@ -1,0 +1,10 @@
+version: 2
+
+models:
+  - name: int_price_momentum
+    columns:
+      - name: ticker
+        tests:
+          - not_null
+
+

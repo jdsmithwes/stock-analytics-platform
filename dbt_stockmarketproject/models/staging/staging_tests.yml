@@ -1,0 +1,35 @@
+version: 2
+
+models:
+  - name: stg_stockpricedata
+    description: "Cleaned and standardized daily stock price data."
+
+    # Model-level tests
+    tests:
+      - dbt_utils.recency:
+          arguments:
+            field: trading_date
+            datepart: day
+            interval: 90   # <-- updated
+
+    columns:
+      - name: trading_date
+        tests:
+          - not_null
+
+      - name: ticker
+        tests:
+          - not_null
+
+      - name: close_price
+        tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1000000000
+
+      - name: volume
+        tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
