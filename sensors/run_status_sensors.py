@@ -1,5 +1,5 @@
 from dagster import run_status_sensor, DagsterRunStatus
-from dagster_stock_pipeline.notifications.sns import send_sns
+from notifications.sns import send_sns
 
 @run_status_sensor(
     run_status=DagsterRunStatus.SUCCESS,
