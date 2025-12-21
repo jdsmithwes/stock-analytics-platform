@@ -1,4 +1,3 @@
-
 from dagster import op, get_dagster_logger, RetryPolicy
 import subprocess
 import os
@@ -15,7 +14,7 @@ def run_dbt_build():
     # Resolve dbt binary at runtime
     dbt_bin = os.getenv("DBT_BIN", "dbt")
 
-    # ✅ FIX: default to INNER dbt project directory
+    # Correct nested dbt project directory
     dbt_project_dir = Path(
         os.getenv(
             "DBT_PROJECT_DIR",
@@ -33,14 +32,13 @@ def run_dbt_build():
     logger.info(f"DBT_PROJECT_DIR resolved to: {dbt_project_dir}")
     logger.info(f"DBT_PROFILES_DIR resolved to: {dbt_profiles_dir}")
 
-    # ---- Hard validation (fail fast, fail clearly) ----
+    # Fail fast if paths are wrong
     if not dbt_project_dir.exists():
         raise FileNotFoundError(
             f"DBT project directory not found: {dbt_project_dir}"
         )
 
-    project_file = dbt_project_dir / "dbt_project.yml"
-    if not project_file.exists():
+    if not (dbt_project_dir / "dbt_project.yml").exists():
         raise FileNotFoundError(
             f"dbt_project.yml not found in {dbt_project_dir}"
         )
@@ -50,7 +48,6 @@ def run_dbt_build():
             f"DBT profiles directory not found: {dbt_profiles_dir}"
         )
 
-    # ---- Build command ----
     cmd = [
         dbt_bin,
         "build",
@@ -68,13 +65,10 @@ def run_dbt_build():
         text=True,
     )
 
-    # Always log stdout (dbt progress)
     if result.stdout:
         logger.info(result.stdout)
 
-    # Fail loudly and informatively
     if result.returncode != 0:
-        logger.error("dbt build failed")
         if result.stderr:
             logger.error(result.stderr)
 
