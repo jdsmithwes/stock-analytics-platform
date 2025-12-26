@@ -1,10 +1,9 @@
 import os
 import re
 import asyncio
-import aiohttp
-import pandas as pd
-import boto3
 import logging
+import boto3
+import pandas as pd
 from datetime import date, datetime, timedelta
 from aiohttp import ClientSession, ClientTimeout
 from tenacity import retry, stop_after_attempt, wait_fixed
@@ -18,7 +17,7 @@ logging.basicConfig(
 )
 
 # -----------------------------------------------------------
-# ENVIRONMENT VARIABLES (NO NEW ONES)
+# ENVIRONMENT VARIABLES
 # -----------------------------------------------------------
 AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
@@ -37,7 +36,6 @@ if not ALPHAVANTAGE_API_KEY:
 S3_PREFIX = "stock_prices/"
 DATE_REGEX = re.compile(r"(\d{4}-\d{2}-\d{2})")
 BACKFILL_START_DATE = date(2025, 11, 1)
-BOOTSTRAP_TICKER = "AAPL"
 
 # -----------------------------------------------------------
 # AWS CLIENT
@@ -50,14 +48,15 @@ s3 = boto3.client(
 )
 
 # -----------------------------------------------------------
-# DISCOVER EXISTING DATES IN S3
+# DISCOVER EXISTING DATES FROM S3 FILENAMES
 # -----------------------------------------------------------
 def get_existing_dates() -> set[date]:
     paginator = s3.get_paginator("list_objects_v2")
     dates = set()
 
     for page in paginator.paginate(
-        Bucket=S3_BUCKET_NAME, Prefix=S3_PREFIX
+        Bucket=S3_BUCKET_NAME,
+        Prefix=S3_PREFIX,
     ):
         for obj in page.get("Contents", []):
             match = DATE_REGEX.search(obj["Key"])
@@ -67,17 +66,24 @@ def get_existing_dates() -> set[date]:
                         match.group(1), "%Y-%m-%d"
                     ).date()
                 )
+
     logging.info(f"📦 Found {len(dates)} existing dates in S3")
     return dates
 
 # -----------------------------------------------------------
-# DISCOVER TICKERS FROM S3
+# DISCOVER TICKERS FROM CSV DATA (SAME AS MAIN SCRIPT)
 # -----------------------------------------------------------
-def discover_tickers() -> list[str]:
+def discover_tickers_from_s3() -> list[str]:
+    """
+    Uses existing S3 CSV data to discover ticker universe.
+    This is the same authoritative logic used by the main ingestion job.
+    """
     paginator = s3.get_paginator("list_objects_v2")
+    tickers = set()
 
     for page in paginator.paginate(
-        Bucket=S3_BUCKET_NAME, Prefix=S3_PREFIX
+        Bucket=S3_BUCKET_NAME,
+        Prefix=S3_PREFIX,
     ):
         for obj in page.get("Contents", []):
             if obj["Key"].endswith(".csv"):
@@ -86,36 +92,52 @@ def discover_tickers() -> list[str]:
                     Key=obj["Key"],
                 )
                 df = pd.read_csv(response["Body"], nrows=500)
-                if "ticker" in df.columns:
-                    tickers = sorted(
-                        df["ticker"].dropna().unique().tolist()
-                    )
-                    logging.info(
-                        f"📈 Discovered {len(tickers)} tickers"
-                    )
-                    return tickers
 
-    logging.warning("⚠️ No tickers found — using bootstrap")
-    return [BOOTSTRAP_TICKER]
+                if "ticker" in df.columns:
+                    tickers.update(
+                        df["ticker"].dropna().unique()
+                    )
+
+            if tickers:
+                break
+
+        if tickers:
+            break
+
+    if not tickers:
+        raise RuntimeError(
+            "❌ No tickers found in S3 CSV data"
+        )
+
+    ticker_list = sorted(tickers)
+    logging.info(
+        f"📈 Discovered {len(ticker_list)} tickers from CSV data"
+    )
+    return ticker_list
 
 # -----------------------------------------------------------
 # COMPUTE MISSING DATES
 # -----------------------------------------------------------
 def get_missing_dates(existing_dates: set[date]) -> list[date]:
     today = date.today()
-    expected = {
+
+    expected_dates = {
         BACKFILL_START_DATE + timedelta(days=i)
         for i in range((today - BACKFILL_START_DATE).days + 1)
     }
-    missing = sorted(expected - existing_dates)
+
+    missing = sorted(expected_dates - existing_dates)
     logging.info(f"❌ Missing {len(missing)} dates")
     return missing
 
 # -----------------------------------------------------------
-# API CALL
+# API CALL – FULL HISTORY PER TICKER
 # -----------------------------------------------------------
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
-async def fetch_stock_data(session, ticker):
+async def fetch_stock_history(
+    session: ClientSession,
+    ticker: str,
+) -> pd.DataFrame:
     url = (
         "https://www.alphavantage.co/query"
         f"?function=TIME_SERIES_DAILY_ADJUSTED"
@@ -126,10 +148,10 @@ async def fetch_stock_data(session, ticker):
 
     async with session.get(url) as response:
         response.raise_for_status()
-        data = await response.json()
+        data = await response.json(content_type=None)
 
         if "Time Series (Daily)" not in data:
-            raise ValueError(f"Bad response for {ticker}")
+            raise ValueError(f"Invalid API response for {ticker}")
 
         df = (
             pd.DataFrame.from_dict(
@@ -141,6 +163,7 @@ async def fetch_stock_data(session, ticker):
 
         df["date"] = pd.to_datetime(df["date"]).dt.date
         df["ticker"] = ticker
+
         return df
 
 # -----------------------------------------------------------
@@ -154,12 +177,16 @@ async def main():
         logging.info("✅ No missing dates — exiting")
         return
 
-    tickers = discover_tickers()
+    tickers = discover_tickers_from_s3()
+    logging.info(
+        f"🔎 Backfill will run for {len(tickers)} tickers"
+    )
 
-    timeout = ClientTimeout(total=90)
+    timeout = ClientTimeout(total=120)
+
     async with ClientSession(timeout=timeout) as session:
         tasks = [
-            fetch_stock_data(session, ticker)
+            fetch_stock_history(session, ticker)
             for ticker in tickers
         ]
         results = await asyncio.gather(*tasks)
@@ -170,11 +197,14 @@ async def main():
         day_df = full_df[full_df["date"] == missing_date]
 
         if day_df.empty:
-            logging.warning(f"No data for {missing_date}")
+            logging.warning(f"⚠️ No data for {missing_date}")
             continue
 
         local_file = "/tmp/stock_prices.csv"
-        s3_key = f"{S3_PREFIX}{missing_date}_stock_prices.csv"
+        s3_key = (
+            f"{S3_PREFIX}"
+            f"{missing_date}_stock_prices.csv"
+        )
 
         day_df.to_csv(local_file, index=False)
         s3.upload_file(local_file, S3_BUCKET_NAME, s3_key)
