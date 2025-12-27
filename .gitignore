@@ -10,3 +10,10 @@ stock-backfill-env/
 __pycache__/
 *.pyc
 
+# IDE specific files
+.vscode/
+.idea/
+.python-version
+pyproject.toml
+logs/
+
