@@ -18,7 +18,7 @@ logging.basicConfig(
 )
 
 # -----------------------------------------------------------
-# EXISTING ENVIRONMENT VARIABLES ONLY
+# ENVIRONMENT VARIABLES
 # -----------------------------------------------------------
 AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
@@ -32,12 +32,14 @@ if not ALPHAVANTAGE_API_KEY:
     raise ValueError("Missing ALPHAVANTAGE_API_KEY environment variable")
 
 # -----------------------------------------------------------
-# INTERNAL CONSTANTS (NOT ENV VARS)
+# CONSTANTS
 # -----------------------------------------------------------
 S3_PREFIX = "stock_prices/"
 DATE_REGEX = re.compile(r"(\d{4}-\d{2}-\d{2})")
 FALLBACK_START_DATE = date(2020, 1, 1)
-BOOTSTRAP_TICKER = "AAPL"  # used only if S3 is empty
+
+# ✅ NEW: Static S&P 500 ticker source
+SP500_TICKER_FILE = "ticker_data/sp500_tickers_api.csv"
 
 # -----------------------------------------------------------
 # AWS CLIENT
@@ -48,6 +50,40 @@ s3_client = boto3.client(
     aws_access_key_id=AWS_ACCESS_KEY_ID,
     aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
 )
+
+# -----------------------------------------------------------
+# LOAD STATIC S&P 500 TICKERS (AUTHORITATIVE)
+# -----------------------------------------------------------
+def load_sp500_tickers() -> list[str]:
+    """
+    Loads the authoritative S&P 500 ticker universe from
+    ticker_data/sp500_tickers_api.csv
+    """
+    if not os.path.exists(SP500_TICKER_FILE):
+        raise FileNotFoundError(
+            f"Ticker file not found: {SP500_TICKER_FILE}"
+        )
+
+    df = pd.read_csv(SP500_TICKER_FILE)
+
+    if "ticker" not in df.columns:
+        raise ValueError(
+            "sp500_tickers_api.csv must contain a 'ticker' column"
+        )
+
+    tickers = (
+        df["ticker"]
+        .dropna()
+        .astype(str)
+        .str.upper()
+        .unique()
+        .tolist()
+    )
+
+    logging.info(
+        f"📌 Loaded {len(tickers)} S&P 500 tickers from static file"
+    )
+    return sorted(tickers)
 
 # -----------------------------------------------------------
 # DISCOVER LAST LOADED DATE FROM S3
@@ -76,48 +112,6 @@ def get_last_loaded_date_from_s3() -> date:
     logging.warning("⚠️ No dated objects found in S3")
     return FALLBACK_START_DATE
 
-
-# -----------------------------------------------------------
-# DISCOVER TICKERS DYNAMICALLY FROM S3 DATA
-# -----------------------------------------------------------
-def discover_tickers_from_s3() -> list[str]:
-    """
-    Reads a small sample of existing S3 files to infer tickers dynamically.
-    """
-    paginator = s3_client.get_paginator("list_objects_v2")
-    tickers = set()
-
-    for page in paginator.paginate(
-        Bucket=S3_BUCKET_NAME,
-        Prefix=S3_PREFIX,
-    ):
-        for obj in page.get("Contents", []):
-            if obj["Key"].endswith(".csv"):
-                response = s3_client.get_object(
-                    Bucket=S3_BUCKET_NAME,
-                    Key=obj["Key"],
-                )
-                df = pd.read_csv(response["Body"], nrows=500)
-                if "ticker" in df.columns:
-                    tickers.update(df["ticker"].dropna().unique())
-
-            if tickers:
-                break
-
-        if tickers:
-            break
-
-    if tickers:
-        ticker_list = sorted(tickers)
-        logging.info(f"📈 Discovered {len(ticker_list)} tickers dynamically")
-        return ticker_list
-
-    logging.warning(
-        "⚠️ No existing ticker data found — using bootstrap ticker"
-    )
-    return [BOOTSTRAP_TICKER]
-
-
 # -----------------------------------------------------------
 # DETERMINE API DATE WINDOW
 # -----------------------------------------------------------
@@ -132,7 +126,6 @@ def determine_api_date_window():
 
     logging.info(f"📅 API window: {start_date} → {end_date}")
     return start_date, end_date
-
 
 # -----------------------------------------------------------
 # API CALL
@@ -149,7 +142,7 @@ async def fetch_stock_data(session, ticker, start_date, end_date):
 
     async with session.get(url) as response:
         response.raise_for_status()
-        data = await response.json()
+        data = await response.json(content_type=None)
 
         if "Time Series (Daily)" not in data:
             raise ValueError(f"Invalid API response for {ticker}")
@@ -168,7 +161,6 @@ async def fetch_stock_data(session, ticker, start_date, end_date):
 
         return df
 
-
 # -----------------------------------------------------------
 # MAIN
 # -----------------------------------------------------------
@@ -177,7 +169,9 @@ async def main():
     if not start_date:
         return
 
-    tickers = discover_tickers_from_s3()
+    # ✅ NEW: load tickers statically
+    tickers = load_sp500_tickers()
+    logging.info(f"🔎 API will run for {len(tickers)} S&P 500 tickers")
 
     timeout = ClientTimeout(total=60)
     async with ClientSession(timeout=timeout) as session:
@@ -209,7 +203,6 @@ async def main():
         f"✅ Uploaded {len(final_df)} rows to "
         f"s3://{S3_BUCKET_NAME}/{s3_key}"
     )
-
 
 # -----------------------------------------------------------
 # ENTRY POINT
