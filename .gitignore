@@ -1,6 +1,7 @@
 # Virtual environments
 dagster-env/
 venv/
+stock-backfill-env/
 
 # Editable install artifacts
 *.egg-info/
