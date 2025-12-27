@@ -5,6 +5,7 @@ import aiohttp
 import pandas as pd
 import boto3
 import logging
+from pathlib import Path
 from datetime import datetime, timedelta, date
 from aiohttp import ClientSession, ClientTimeout
 from tenacity import retry, stop_after_attempt, wait_fixed
@@ -16,6 +17,12 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
+
+# -----------------------------------------------------------
+# BASE PATHS (🔥 FIX — SAME AS MISSING DATES SCRIPT)
+# -----------------------------------------------------------
+BASE_DIR = Path(__file__).resolve().parent.parent
+SP500_TICKER_FILE = BASE_DIR / "ticker_data" / "sp500_tickers_api.csv"
 
 # -----------------------------------------------------------
 # ENVIRONMENT VARIABLES
@@ -38,9 +45,6 @@ S3_PREFIX = "stock_prices/"
 DATE_REGEX = re.compile(r"(\d{4}-\d{2}-\d{2})")
 FALLBACK_START_DATE = date(2020, 1, 1)
 
-# ✅ NEW: Static S&P 500 ticker source
-SP500_TICKER_FILE = "ticker_data/sp500_tickers_api.csv"
-
 # -----------------------------------------------------------
 # AWS CLIENT
 # -----------------------------------------------------------
@@ -59,7 +63,9 @@ def load_sp500_tickers() -> list[str]:
     Loads the authoritative S&P 500 ticker universe from
     ticker_data/sp500_tickers_api.csv
     """
-    if not os.path.exists(SP500_TICKER_FILE):
+    logging.info(f"📌 Loading S&P 500 tickers from: {SP500_TICKER_FILE}")
+
+    if not SP500_TICKER_FILE.exists():
         raise FileNotFoundError(
             f"Ticker file not found: {SP500_TICKER_FILE}"
         )
@@ -169,7 +175,6 @@ async def main():
     if not start_date:
         return
 
-    # ✅ NEW: load tickers statically
     tickers = load_sp500_tickers()
     logging.info(f"🔎 API will run for {len(tickers)} S&P 500 tickers")
 
