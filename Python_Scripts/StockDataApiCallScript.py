@@ -20,7 +20,7 @@ logging.basicConfig(
 )
 
 # -----------------------------------------------------------
-# BASE PATHS (🔥 PATH-SAFE, PROD-GRADE)
+# BASE PATHS (PATH-SAFE)
 # -----------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent.parent
 SP500_TICKER_FILE = BASE_DIR / "ticker_data" / "sp500_tickers_api.csv"
@@ -62,32 +62,20 @@ s3_client = boto3.client(
 )
 
 # -----------------------------------------------------------
-# LOAD STATIC S&P 500 TICKERS (DEFENSIVE + NORMALIZED)
+# LOAD STATIC S&P 500 TICKERS (DEFENSIVE)
 # -----------------------------------------------------------
 def load_sp500_tickers() -> list[str]:
-    """
-    Loads the authoritative S&P 500 ticker universe from CSV.
-    Defensively normalizes headers and removes bad rows.
-    """
-
     if not SP500_TICKER_FILE.exists():
         raise FileNotFoundError(f"Ticker file not found: {SP500_TICKER_FILE}")
 
     df = pd.read_csv(SP500_TICKER_FILE)
 
-    # 🔒 Normalize column names (fixes BOM, casing, whitespace)
     df.columns = (
         df.columns
         .str.strip()
         .str.lower()
         .str.replace("\ufeff", "", regex=False)
     )
-
-    if "ticker" not in df.columns:
-        raise ValueError(
-            f"'ticker' column not found after normalization. "
-            f"Found columns: {list(df.columns)}"
-        )
 
     tickers = (
         df["ticker"]
@@ -97,16 +85,13 @@ def load_sp500_tickers() -> list[str]:
         .str.strip()
     )
 
-    # 🚫 Remove accidental header rows or junk
     tickers = tickers[tickers != "TICKER"]
-
     tickers = sorted(tickers.unique().tolist())
 
     if not tickers:
         raise ValueError("Ticker list is empty after cleaning")
 
     logging.info(f"📌 Loaded {len(tickers)} valid S&P 500 tickers")
-
     return tickers
 
 # -----------------------------------------------------------
@@ -152,7 +137,7 @@ def determine_api_date_window():
     return start_date, end_date
 
 # -----------------------------------------------------------
-# API CALL
+# API CALL (NON-FATAL ON EMPTY DATA)
 # -----------------------------------------------------------
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
 async def fetch_stock_data(session, ticker, start_date, end_date):
@@ -165,11 +150,15 @@ async def fetch_stock_data(session, ticker, start_date, end_date):
     )
 
     async with session.get(url) as response:
-        response.raise_for_status()
+        if response.status != 200:
+            raise RuntimeError(f"API error {response.status} for {ticker}")
+
         data = await response.json(content_type=None)
 
+        # 🚫 NON-FATAL: skip bad / unsupported tickers
         if "Time Series (Daily)" not in data:
-            raise ValueError(f"Invalid API response for {ticker}")
+            logging.warning(f"⚠️ No daily data for {ticker} — skipping")
+            return None
 
         df = (
             pd.DataFrame.from_dict(
@@ -183,10 +172,14 @@ async def fetch_stock_data(session, ticker, start_date, end_date):
         df = df[(df["date"] >= start_date) & (df["date"] <= end_date)]
         df["ticker"] = ticker
 
+        if df.empty:
+            logging.warning(f"⚠️ No rows in date window for {ticker}")
+            return None
+
         return df
 
 # -----------------------------------------------------------
-# MAIN
+# MAIN (SAFE ASYNC EXECUTION)
 # -----------------------------------------------------------
 async def main():
     start_date, end_date = determine_api_date_window()
@@ -197,18 +190,30 @@ async def main():
     logging.info(f"🔎 API will run for {len(tickers)} tickers")
 
     timeout = ClientTimeout(total=60)
+    success, skipped = 0, 0
+    dfs = []
+
     async with ClientSession(timeout=timeout) as session:
         tasks = [
             fetch_stock_data(session, ticker, start_date, end_date)
             for ticker in tickers
         ]
-        results = await asyncio.gather(*tasks)
 
-    final_df = pd.concat(results, ignore_index=True)
+        for future in asyncio.as_completed(tasks):
+            result = await future
 
-    if final_df.empty:
-        logging.info("⚠️ API returned no new rows — exiting")
+            if result is None:
+                skipped += 1
+                continue
+
+            dfs.append(result)
+            success += 1
+
+    if not dfs:
+        logging.warning("⚠️ No valid dataframes returned — exiting")
         return
+
+    final_df = pd.concat(dfs, ignore_index=True)
 
     file_date = end_date.strftime("%Y-%m-%d")
     local_file = "/tmp/stock_prices.csv"
@@ -223,8 +228,9 @@ async def main():
     )
 
     logging.info(
-        f"✅ Uploaded {len(final_df)} rows to "
-        f"s3://{S3_BUCKET_NAME}/{s3_key}"
+        f"✅ Uploaded {len(final_df)} rows "
+        f"(tickers success={success}, skipped={skipped}) "
+        f"to s3://{S3_BUCKET_NAME}/{s3_key}"
     )
 
 # -----------------------------------------------------------

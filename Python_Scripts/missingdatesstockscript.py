@@ -18,14 +18,10 @@ logging.basicConfig(
 )
 
 # -----------------------------------------------------------
-# BASE PATHS (🔥 PATH-SAFE, PROD-GRADE)
+# BASE PATHS
 # -----------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent.parent
 TICKER_FILE = BASE_DIR / "ticker_data" / "sp500_tickers_api.csv"
-
-logging.info(f"📂 Script location: {Path(__file__).resolve()}")
-logging.info(f"📂 Repo base dir: {BASE_DIR}")
-logging.info(f"📂 Ticker file path: {TICKER_FILE}")
 
 # -----------------------------------------------------------
 # ENVIRONMENT VARIABLES
@@ -38,7 +34,6 @@ ALPHAVANTAGE_API_KEY = os.getenv("ALPHAVANTAGE_API_KEY")
 
 if not S3_BUCKET_NAME:
     raise ValueError("Missing S3_BUCKET_NAME environment variable")
-
 if not ALPHAVANTAGE_API_KEY:
     raise ValueError("Missing ALPHAVANTAGE_API_KEY environment variable")
 
@@ -60,29 +55,16 @@ REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=30)
 MAX_CONCURRENT_REQUESTS = 5
 
 # -----------------------------------------------------------
-# LOAD STATIC S&P 500 TICKERS (DEFENSIVE + NORMALIZED)
+# LOAD TICKERS (DEFENSIVE)
 # -----------------------------------------------------------
 def load_sp500_tickers() -> list[str]:
-    logging.info(f"📌 Loading ticker file from: {TICKER_FILE}")
-
-    if not TICKER_FILE.exists():
-        raise FileNotFoundError(f"Ticker file not found: {TICKER_FILE}")
-
     df = pd.read_csv(TICKER_FILE)
 
-    # 🔒 Normalize column names (handles BOM, casing, whitespace)
     df.columns = (
-        df.columns
-        .str.strip()
+        df.columns.str.strip()
         .str.lower()
         .str.replace("\ufeff", "", regex=False)
     )
-
-    if "ticker" not in df.columns:
-        raise ValueError(
-            f"'ticker' column not found after normalization. "
-            f"Found columns: {list(df.columns)}"
-        )
 
     tickers = (
         df["ticker"]
@@ -92,25 +74,14 @@ def load_sp500_tickers() -> list[str]:
         .str.strip()
     )
 
-    # 🚫 Remove accidental header rows or junk values
     tickers = tickers[tickers != "TICKER"]
-
-    tickers = sorted(tickers.unique().tolist())
-
-    if not tickers:
-        raise ValueError("Ticker list is empty after cleaning")
-
-    logging.info(f"📌 Loaded {len(tickers)} valid S&P 500 tickers")
-    return tickers
+    return sorted(tickers.unique().tolist())
 
 # -----------------------------------------------------------
-# ALPHA VANTAGE API CALL
+# API CALL (NON-FATAL ON EMPTY DATA)
 # -----------------------------------------------------------
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
-async def fetch_daily_adjusted(
-    session: aiohttp.ClientSession,
-    ticker: str,
-):
+async def fetch_daily_adjusted(session, ticker):
     params = {
         "function": "TIME_SERIES_DAILY_ADJUSTED",
         "symbol": ticker,
@@ -124,15 +95,17 @@ async def fetch_daily_adjusted(
 
         data = await response.json(content_type=None)
 
+        # 🚫 NON-FATAL CONDITION
         if "Time Series (Daily)" not in data:
-            raise ValueError(f"No daily data returned for {ticker}")
+            logging.warning(f"⚠️ No daily data for {ticker} — skipping")
+            return None
 
         return ticker, data["Time Series (Daily)"]
 
 # -----------------------------------------------------------
 # PROCESS & SAVE TO S3
 # -----------------------------------------------------------
-def process_and_upload(ticker: str, daily_data: dict):
+def process_and_upload(ticker, daily_data):
     records = []
 
     for date_str, values in daily_data.items():
@@ -154,24 +127,26 @@ def process_and_upload(ticker: str, daily_data: dict):
 
     df = pd.DataFrame(records)
 
+    if df.empty:
+        logging.warning(f"⚠️ Empty dataframe for {ticker} — skipping upload")
+        return
+
     key = f"backfill/daily_prices/{ticker}.csv"
-    csv_data = df.to_csv(index=False)
 
     s3_client.put_object(
         Bucket=S3_BUCKET_NAME,
         Key=key,
-        Body=csv_data,
+        Body=df.to_csv(index=False),
     )
 
-    logging.info(
-        f"✅ Uploaded {ticker} backfill to s3://{S3_BUCKET_NAME}/{key}"
-    )
+    logging.info(f"✅ Uploaded backfill for {ticker}")
 
 # -----------------------------------------------------------
-# ASYNC WORKER
+# ASYNC WORKER (SAFE)
 # -----------------------------------------------------------
-async def run_backfill(tickers: list[str]):
+async def run_backfill(tickers):
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
+    success, skipped = 0, 0
 
     async with aiohttp.ClientSession(timeout=REQUEST_TIMEOUT) as session:
 
@@ -179,25 +154,30 @@ async def run_backfill(tickers: list[str]):
             async with semaphore:
                 return await fetch_daily_adjusted(session, ticker)
 
-        tasks = [bound_fetch(ticker) for ticker in tickers]
+        tasks = [bound_fetch(t) for t in tickers]
 
         for future in asyncio.as_completed(tasks):
-            ticker, data = await future
+            result = await future
+
+            if result is None:
+                skipped += 1
+                continue
+
+            ticker, data = result
             process_and_upload(ticker, data)
+            success += 1
+
+    logging.info(
+        f"📊 Backfill summary — success: {success}, skipped: {skipped}"
+    )
 
 # -----------------------------------------------------------
 # MAIN
 # -----------------------------------------------------------
 async def main():
-    logging.info("🚀 Starting missing dates stock backfill job")
-
+    logging.info("🚀 Starting missing-dates backfill job")
     tickers = load_sp500_tickers()
     await run_backfill(tickers)
+    logging.info("🏁 Backfill job completed")
 
-    logging.info("✅ Backfill job completed successfully")
-
-# -----------------------------------------------------------
-# ENTRY POINT
-# -----------------------------------------------------------
-if __name__ == "__main__":
-    asyncio.run(main())
+# ---------------------------------------
