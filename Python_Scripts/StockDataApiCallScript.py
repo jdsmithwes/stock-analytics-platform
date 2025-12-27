@@ -1,12 +1,13 @@
 import os
 import re
 import asyncio
-import aiohttp
-import pandas as pd
-import boto3
 import logging
 from pathlib import Path
 from datetime import datetime, timedelta, date
+
+import aiohttp
+import pandas as pd
+import boto3
 from aiohttp import ClientSession, ClientTimeout
 from tenacity import retry, stop_after_attempt, wait_fixed
 
@@ -19,10 +20,14 @@ logging.basicConfig(
 )
 
 # -----------------------------------------------------------
-# BASE PATHS (🔥 FIX — SAME AS MISSING DATES SCRIPT)
+# BASE PATHS (🔥 PATH-SAFE, PROD-GRADE)
 # -----------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent.parent
 SP500_TICKER_FILE = BASE_DIR / "ticker_data" / "sp500_tickers_api.csv"
+
+logging.info(f"📂 Script location: {Path(__file__).resolve()}")
+logging.info(f"📂 Repo base dir: {BASE_DIR}")
+logging.info(f"📂 Ticker file path: {SP500_TICKER_FILE}")
 
 # -----------------------------------------------------------
 # ENVIRONMENT VARIABLES
@@ -35,6 +40,7 @@ ALPHAVANTAGE_API_KEY = os.getenv("ALPHAVANTAGE_API_KEY")
 
 if not S3_BUCKET_NAME:
     raise ValueError("Missing S3_BUCKET_NAME environment variable")
+
 if not ALPHAVANTAGE_API_KEY:
     raise ValueError("Missing ALPHAVANTAGE_API_KEY environment variable")
 
@@ -56,25 +62,31 @@ s3_client = boto3.client(
 )
 
 # -----------------------------------------------------------
-# LOAD STATIC S&P 500 TICKERS (AUTHORITATIVE)
+# LOAD STATIC S&P 500 TICKERS (DEFENSIVE + NORMALIZED)
 # -----------------------------------------------------------
 def load_sp500_tickers() -> list[str]:
     """
-    Loads the authoritative S&P 500 ticker universe from
-    ticker_data/sp500_tickers_api.csv
+    Loads the authoritative S&P 500 ticker universe from CSV.
+    Defensively normalizes headers and removes bad rows.
     """
-    logging.info(f"📌 Loading S&P 500 tickers from: {SP500_TICKER_FILE}")
 
     if not SP500_TICKER_FILE.exists():
-        raise FileNotFoundError(
-            f"Ticker file not found: {SP500_TICKER_FILE}"
-        )
+        raise FileNotFoundError(f"Ticker file not found: {SP500_TICKER_FILE}")
 
     df = pd.read_csv(SP500_TICKER_FILE)
 
+    # 🔒 Normalize column names (fixes BOM, casing, whitespace)
+    df.columns = (
+        df.columns
+        .str.strip()
+        .str.lower()
+        .str.replace("\ufeff", "", regex=False)
+    )
+
     if "ticker" not in df.columns:
         raise ValueError(
-            "sp500_tickers_api.csv must contain a 'ticker' column"
+            f"'ticker' column not found after normalization. "
+            f"Found columns: {list(df.columns)}"
         )
 
     tickers = (
@@ -82,14 +94,20 @@ def load_sp500_tickers() -> list[str]:
         .dropna()
         .astype(str)
         .str.upper()
-        .unique()
-        .tolist()
+        .str.strip()
     )
 
-    logging.info(
-        f"📌 Loaded {len(tickers)} S&P 500 tickers from static file"
-    )
-    return sorted(tickers)
+    # 🚫 Remove accidental header rows or junk
+    tickers = tickers[tickers != "TICKER"]
+
+    tickers = sorted(tickers.unique().tolist())
+
+    if not tickers:
+        raise ValueError("Ticker list is empty after cleaning")
+
+    logging.info(f"📌 Loaded {len(tickers)} valid S&P 500 tickers")
+
+    return tickers
 
 # -----------------------------------------------------------
 # DISCOVER LAST LOADED DATE FROM S3
@@ -115,7 +133,7 @@ def get_last_loaded_date_from_s3() -> date:
         logging.info(f"📦 Last loaded S3 data date: {latest_date}")
         return latest_date
 
-    logging.warning("⚠️ No dated objects found in S3")
+    logging.warning("⚠️ No dated objects found in S3 — using fallback")
     return FALLBACK_START_DATE
 
 # -----------------------------------------------------------
@@ -176,7 +194,7 @@ async def main():
         return
 
     tickers = load_sp500_tickers()
-    logging.info(f"🔎 API will run for {len(tickers)} S&P 500 tickers")
+    logging.info(f"🔎 API will run for {len(tickers)} tickers")
 
     timeout = ClientTimeout(total=60)
     async with ClientSession(timeout=timeout) as session:

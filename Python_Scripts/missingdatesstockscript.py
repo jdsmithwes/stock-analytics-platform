@@ -2,7 +2,7 @@ import os
 import asyncio
 import logging
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import aiohttp
 import pandas as pd
@@ -18,10 +18,14 @@ logging.basicConfig(
 )
 
 # -----------------------------------------------------------
-# BASE PATHS (🔥 FIXED HERE)
+# BASE PATHS (🔥 PATH-SAFE, PROD-GRADE)
 # -----------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent.parent
 TICKER_FILE = BASE_DIR / "ticker_data" / "sp500_tickers_api.csv"
+
+logging.info(f"📂 Script location: {Path(__file__).resolve()}")
+logging.info(f"📂 Repo base dir: {BASE_DIR}")
+logging.info(f"📂 Ticker file path: {TICKER_FILE}")
 
 # -----------------------------------------------------------
 # ENVIRONMENT VARIABLES
@@ -56,29 +60,57 @@ REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=30)
 MAX_CONCURRENT_REQUESTS = 5
 
 # -----------------------------------------------------------
-# LOAD TICKERS (🔥 FIXED PATH)
+# LOAD STATIC S&P 500 TICKERS (DEFENSIVE + NORMALIZED)
 # -----------------------------------------------------------
 def load_sp500_tickers() -> list[str]:
-    logging.info(f"Loading ticker file from: {TICKER_FILE}")
+    logging.info(f"📌 Loading ticker file from: {TICKER_FILE}")
 
     if not TICKER_FILE.exists():
         raise FileNotFoundError(f"Ticker file not found: {TICKER_FILE}")
 
     df = pd.read_csv(TICKER_FILE)
 
+    # 🔒 Normalize column names (handles BOM, casing, whitespace)
+    df.columns = (
+        df.columns
+        .str.strip()
+        .str.lower()
+        .str.replace("\ufeff", "", regex=False)
+    )
+
     if "ticker" not in df.columns:
-        raise ValueError("Ticker CSV must contain a 'ticker' column")
+        raise ValueError(
+            f"'ticker' column not found after normalization. "
+            f"Found columns: {list(df.columns)}"
+        )
 
-    tickers = df["ticker"].dropna().unique().tolist()
-    logging.info(f"Loaded {len(tickers)} tickers")
+    tickers = (
+        df["ticker"]
+        .dropna()
+        .astype(str)
+        .str.upper()
+        .str.strip()
+    )
 
+    # 🚫 Remove accidental header rows or junk values
+    tickers = tickers[tickers != "TICKER"]
+
+    tickers = sorted(tickers.unique().tolist())
+
+    if not tickers:
+        raise ValueError("Ticker list is empty after cleaning")
+
+    logging.info(f"📌 Loaded {len(tickers)} valid S&P 500 tickers")
     return tickers
 
 # -----------------------------------------------------------
 # ALPHA VANTAGE API CALL
 # -----------------------------------------------------------
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
-async def fetch_daily_adjusted(session: aiohttp.ClientSession, ticker: str):
+async def fetch_daily_adjusted(
+    session: aiohttp.ClientSession,
+    ticker: str,
+):
     params = {
         "function": "TIME_SERIES_DAILY_ADJUSTED",
         "symbol": ticker,
@@ -90,7 +122,7 @@ async def fetch_daily_adjusted(session: aiohttp.ClientSession, ticker: str):
         if response.status != 200:
             raise RuntimeError(f"API error {response.status} for {ticker}")
 
-        data = await response.json()
+        data = await response.json(content_type=None)
 
         if "Time Series (Daily)" not in data:
             raise ValueError(f"No daily data returned for {ticker}")
@@ -116,6 +148,7 @@ def process_and_upload(ticker: str, daily_data: dict):
                 "dividend_amount": values.get("7. dividend amount"),
                 "split_coefficient": values.get("8. split coefficient"),
                 "ticker": ticker,
+                "load_time": datetime.utcnow(),
             }
         )
 
@@ -130,7 +163,9 @@ def process_and_upload(ticker: str, daily_data: dict):
         Body=csv_data,
     )
 
-    logging.info(f"Uploaded {ticker} backfill to s3://{S3_BUCKET_NAME}/{key}")
+    logging.info(
+        f"✅ Uploaded {ticker} backfill to s3://{S3_BUCKET_NAME}/{key}"
+    )
 
 # -----------------------------------------------------------
 # ASYNC WORKER
@@ -154,12 +189,12 @@ async def run_backfill(tickers: list[str]):
 # MAIN
 # -----------------------------------------------------------
 async def main():
-    logging.info("Starting missing dates stock backfill job")
+    logging.info("🚀 Starting missing dates stock backfill job")
 
     tickers = load_sp500_tickers()
     await run_backfill(tickers)
 
-    logging.info("Backfill job completed successfully")
+    logging.info("✅ Backfill job completed successfully")
 
 # -----------------------------------------------------------
 # ENTRY POINT
