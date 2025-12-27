@@ -37,6 +37,8 @@ S3_PREFIX = "stock_prices/"
 DATE_REGEX = re.compile(r"(\d{4}-\d{2}-\d{2})")
 BACKFILL_START_DATE = date(2025, 11, 1)
 
+TICKER_FILE = "ticker_data/sp500_tickers_api.csv"
+
 # -----------------------------------------------------------
 # AWS CLIENT
 # -----------------------------------------------------------
@@ -48,11 +50,35 @@ s3 = boto3.client(
 )
 
 # -----------------------------------------------------------
-# DISCOVER EXISTING DATES FROM S3 FILENAMES
+# LOAD STATIC TICKERS (AUTHORITATIVE)
 # -----------------------------------------------------------
-def get_existing_dates() -> set[date]:
+def load_sp500_tickers() -> list[str]:
+    if not os.path.exists(TICKER_FILE):
+        raise FileNotFoundError(f"Ticker file not found: {TICKER_FILE}")
+
+    df = pd.read_csv(TICKER_FILE)
+
+    if "ticker" not in df.columns:
+        raise ValueError("Ticker CSV must contain 'ticker' column")
+
+    tickers = (
+        df["ticker"]
+        .dropna()
+        .astype(str)
+        .str.upper()
+        .unique()
+        .tolist()
+    )
+
+    logging.info(f"📌 Loaded {len(tickers)} S&P 500 tickers")
+    return sorted(tickers)
+
+# -----------------------------------------------------------
+# GET EXISTING DATES PER TICKER FROM S3
+# -----------------------------------------------------------
+def get_existing_dates_by_ticker() -> dict[str, set[date]]:
     paginator = s3.get_paginator("list_objects_v2")
-    dates = set()
+    existing = {}
 
     for page in paginator.paginate(
         Bucket=S3_BUCKET_NAME,
@@ -60,84 +86,43 @@ def get_existing_dates() -> set[date]:
     ):
         for obj in page.get("Contents", []):
             match = DATE_REGEX.search(obj["Key"])
-            if match:
-                dates.add(
-                    datetime.strptime(
-                        match.group(1), "%Y-%m-%d"
-                    ).date()
+            if not match:
+                continue
+
+            d = datetime.strptime(match.group(1), "%Y-%m-%d").date()
+
+            try:
+                df = pd.read_csv(
+                    s3.get_object(
+                        Bucket=S3_BUCKET_NAME,
+                        Key=obj["Key"],
+                    )["Body"],
+                    usecols=["ticker"],
                 )
+            except Exception:
+                continue
 
-    logging.info(f"📦 Found {len(dates)} existing dates in S3")
-    return dates
+            for t in df["ticker"].dropna().unique():
+                existing.setdefault(t, set()).add(d)
 
-# -----------------------------------------------------------
-# DISCOVER TICKERS FROM CSV DATA (SAME AS MAIN SCRIPT)
-# -----------------------------------------------------------
-def discover_tickers_from_s3() -> list[str]:
-    """
-    Uses existing S3 CSV data to discover ticker universe.
-    This is the same authoritative logic used by the main ingestion job.
-    """
-    paginator = s3.get_paginator("list_objects_v2")
-    tickers = set()
-
-    for page in paginator.paginate(
-        Bucket=S3_BUCKET_NAME,
-        Prefix=S3_PREFIX,
-    ):
-        for obj in page.get("Contents", []):
-            if obj["Key"].endswith(".csv"):
-                response = s3.get_object(
-                    Bucket=S3_BUCKET_NAME,
-                    Key=obj["Key"],
-                )
-                df = pd.read_csv(response["Body"], nrows=500)
-
-                if "ticker" in df.columns:
-                    tickers.update(
-                        df["ticker"].dropna().unique()
-                    )
-
-            if tickers:
-                break
-
-        if tickers:
-            break
-
-    if not tickers:
-        raise RuntimeError(
-            "❌ No tickers found in S3 CSV data"
-        )
-
-    ticker_list = sorted(tickers)
-    logging.info(
-        f"📈 Discovered {len(ticker_list)} tickers from CSV data"
-    )
-    return ticker_list
+    logging.info("📦 Loaded existing ticker/date coverage from S3")
+    return existing
 
 # -----------------------------------------------------------
-# COMPUTE MISSING DATES
+# EXPECTED DATE RANGE
 # -----------------------------------------------------------
-def get_missing_dates(existing_dates: set[date]) -> list[date]:
+def get_expected_dates() -> set[date]:
     today = date.today()
-
-    expected_dates = {
+    return {
         BACKFILL_START_DATE + timedelta(days=i)
         for i in range((today - BACKFILL_START_DATE).days + 1)
     }
 
-    missing = sorted(expected_dates - existing_dates)
-    logging.info(f"❌ Missing {len(missing)} dates")
-    return missing
-
 # -----------------------------------------------------------
-# API CALL – FULL HISTORY PER TICKER
+# API CALL (FULL HISTORY)
 # -----------------------------------------------------------
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
-async def fetch_stock_history(
-    session: ClientSession,
-    ticker: str,
-) -> pd.DataFrame:
+async def fetch_stock_history(session, ticker: str) -> pd.DataFrame:
     url = (
         "https://www.alphavantage.co/query"
         f"?function=TIME_SERIES_DAILY_ADJUSTED"
@@ -163,56 +148,62 @@ async def fetch_stock_history(
 
         df["date"] = pd.to_datetime(df["date"]).dt.date
         df["ticker"] = ticker
-
         return df
 
 # -----------------------------------------------------------
 # MAIN
 # -----------------------------------------------------------
 async def main():
-    existing_dates = get_existing_dates()
-    missing_dates = get_missing_dates(existing_dates)
+    tickers = load_sp500_tickers()
+    expected_dates = get_expected_dates()
+    existing = get_existing_dates_by_ticker()
 
-    if not missing_dates:
-        logging.info("✅ No missing dates — exiting")
-        return
+    missing_map: dict[date, list[str]] = {}
 
-    tickers = discover_tickers_from_s3()
+    for ticker in tickers:
+        present_dates = existing.get(ticker, set())
+        missing_dates = expected_dates - present_dates
+
+        for d in missing_dates:
+            missing_map.setdefault(d, []).append(ticker)
+
     logging.info(
-        f"🔎 Backfill will run for {len(tickers)} tickers"
+        f"❌ Found {sum(len(v) for v in missing_map.values())} "
+        f"missing ticker/date combinations"
     )
+
+    if not missing_map:
+        logging.info("✅ No missing data — exiting")
+        return
 
     timeout = ClientTimeout(total=120)
 
     async with ClientSession(timeout=timeout) as session:
-        tasks = [
-            fetch_stock_history(session, ticker)
-            for ticker in tickers
-        ]
-        results = await asyncio.gather(*tasks)
+        for missing_date, tickers_for_date in missing_map.items():
+            dfs = []
 
-    full_df = pd.concat(results, ignore_index=True)
+            for ticker in tickers_for_date:
+                history = await fetch_stock_history(session, ticker)
+                row = history[history["date"] == missing_date]
+                if not row.empty:
+                    dfs.append(row)
 
-    for missing_date in missing_dates:
-        day_df = full_df[full_df["date"] == missing_date]
+            if not dfs:
+                logging.warning(f"⚠️ No data for {missing_date}")
+                continue
 
-        if day_df.empty:
-            logging.warning(f"⚠️ No data for {missing_date}")
-            continue
+            day_df = pd.concat(dfs, ignore_index=True)
 
-        local_file = "/tmp/stock_prices.csv"
-        s3_key = (
-            f"{S3_PREFIX}"
-            f"{missing_date}_stock_prices.csv"
-        )
+            local_file = "/tmp/stock_prices.csv"
+            s3_key = f"{S3_PREFIX}{missing_date}_stock_prices.csv"
 
-        day_df.to_csv(local_file, index=False)
-        s3.upload_file(local_file, S3_BUCKET_NAME, s3_key)
+            day_df.to_csv(local_file, index=False)
+            s3.upload_file(local_file, S3_BUCKET_NAME, s3_key)
 
-        logging.info(
-            f"✅ Backfilled {missing_date} "
-            f"({len(day_df)} rows)"
-        )
+            logging.info(
+                f"✅ Backfilled {missing_date} "
+                f"({len(day_df)} rows)"
+            )
 
 # -----------------------------------------------------------
 # ENTRY POINT
